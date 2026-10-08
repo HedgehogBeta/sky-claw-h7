@@ -1,0 +1,23 @@
+/** @file motor_cfg.h
+ *  @brief 天空爪电机清单与总线配置。
+ */
+#ifndef MOTOR_CONFIG_H
+#define MOTOR_CONFIG_H
+#define USE_DJ 1
+#define USE_UNITREE 1
+#define USE_ZMDR 0
+#define USE_VESC 0
+/* CAN 以四通道一组发送，ID 3、4 保持零电流。 */
+#define MOTOR_DJI_COUNT 4U
+#define MOTOR_DJI_CAN_BUS 3U
+#define MOTOR_M2006_COUNT 4U
+#define MOTOR_M3508_COUNT 0U
+#define MOTOR_M2006_REDUCTION_RATIO 36.0f
+#define MOTOR_M3508_REDUCTION_RATIO 19.20320855f
+#define MOTOR_UNITREE_COUNT 1U
+#define MOTOR_UNITREE_UART huart7
+#define MOTOR_UNITREE_REDUCTION_RATIO 6.33f
+#define UNITREE_MOTOR_NUM MOTOR_UNITREE_COUNT
+#define MOTOR_UNITREE_DEFAULT_KP 0.0f
+#define MOTOR_UNITREE_DEFAULT_KW 0.0f
+#endif /* MOTOR_CONFIG_H */

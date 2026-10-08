@@ -1,0 +1,195 @@
+/** @file test_mechanism.c
+ *  @brief 模拟三台电机反馈，验证轨迹和失效处理。
+ */
+#include "mechanism.h"
+#include "mechanism_config.h"
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+static Mechanism_Config_t Test_Config(void)
+{
+    const Mechanism_Config_t config = {
+        .motion_confirmed = true,
+        .pneumatics_confirmed = true,
+        .arm_motor_per_joint = -2.0f,
+        .wrist = {{2.0f, 3.0f}, {2.0f, -3.0f}},
+        .axis = {{-90, 90, 20, 40}, {-60, 60, 20, 40}, {-90, 90, 20, 40}},
+        .wrist_motor_speed_deg_s = {25, 30},
+        .wrist_motor_accel_deg_s2 = {40, 50},
+        .feedback_timeout_ms = 100,
+        .command_lease_ms = 2000};
+    return config;
+}
+
+static Mechanism_Feedback_t Test_Feedback(uint32_t now_ms)
+{
+    Mechanism_Feedback_t feedback = {
+        .shaft_deg = {123, -45, 67}, .rx_ms = {now_ms, now_ms, now_ms}, .seen = {true, true, true}};
+    return feedback;
+}
+
+static void Test_ConfigAndMapping(void)
+{
+    Mechanism_t mechanism;
+    Mechanism_Config_t config = Test_Config();
+    Mechanism_Feedback_t feedback = Test_Feedback(10);
+    assert(Mechanism_ConfigValid(&config));
+    Mechanism_Init(&mechanism, &g_mechanism_config, 10);
+    assert(!mechanism.output.motors_enabled);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 10) == MECH_BAD_CONFIG);
+    assert(Mechanism_Enable(&mechanism, &feedback, 10) == MECH_BAD_CONFIG);
+    assert(Mechanism_SetAir(&mechanism, true, MECH_CLAW_CLOSE, 10) == MECH_BAD_CONFIG);
+    for (int pitch = -60; pitch <= 60; pitch += 10)
+    {
+        for (int roll = -90; roll <= 90; roll += 15)
+        {
+            float shaft[2], actual_pitch, actual_roll;
+            assert(Mechanism_WristForward(&config, (float)pitch, (float)roll, shaft));
+            assert(Mechanism_WristInverse(&config, shaft, &actual_pitch, &actual_roll));
+            assert(fabsf(actual_pitch - pitch) < 1e-4f);
+            assert(fabsf(actual_roll - roll) < 1e-4f);
+        }
+    }
+    config.wrist[1][1] = 3;
+    assert(!Mechanism_ConfigValid(&config));
+    config = Test_Config();
+    config.axis[MECH_ARM].max_speed_deg_s = NAN;
+    assert(!Mechanism_ConfigValid(&config));
+}
+
+static void Test_Trajectory(void)
+{
+    Mechanism_Config_t config = Test_Config();
+    Mechanism_t mechanism;
+    Mechanism_Feedback_t feedback = Test_Feedback(100);
+    Mechanism_Pose_t target = {{30, 20, -15}};
+    float previous_speed[3] = {0};
+    Mechanism_Init(&mechanism, &config, 100);
+    assert(Mechanism_Enable(&mechanism, &feedback, 100) == MECH_NO_ZERO);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 100) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 100) == MECH_OK);
+    Mechanism_Tick(&mechanism, &feedback, 100);
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        assert(fabsf(mechanism.output.shaft_target_deg[i] - feedback.shaft_deg[i]) < 1e-4f);
+    }
+    assert(Mechanism_SetTarget(&mechanism, &target, 100) == MECH_OK);
+    assert(Mechanism_SetTarget(&mechanism, &target, 100) == MECH_BUSY);
+    unsigned step;
+    for (step = 1; step < 2000; ++step)
+    {
+        uint32_t now_ms = 100 + step * 5;
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            feedback.rx_ms[i] = now_ms;
+        }
+        Mechanism_KeepAlive(&mechanism, now_ms);
+        Mechanism_Tick(&mechanism, &feedback, now_ms);
+        assert(mechanism.state == MECH_MANUAL);
+        assert(mechanism.output.motors_enabled);
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            float speed = mechanism.output.shaft_speed_deg_s[i + 1];
+            assert(fabsf(speed) <= config.wrist_motor_speed_deg_s[i] + 0.001f);
+            assert(fabsf(speed - previous_speed[i + 1]) / 0.005f <=
+                   config.wrist_motor_accel_deg_s2[i] + 0.05f);
+            previous_speed[i + 1] = speed;
+        }
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            feedback.shaft_deg[i] = mechanism.output.shaft_target_deg[i];
+        }
+        if (!mechanism.moving)
+        {
+            break;
+        }
+    }
+    assert(step < 2000);
+    for (unsigned i = 0; i < MECH_AXIS_COUNT; ++i)
+    {
+        assert(fabsf(mechanism.setpoint.axis[i] - target.axis[i]) < 1e-4f);
+    }
+    assert(fabsf(mechanism.output.shaft_target_deg[0] - (123 - 60)) < 1e-4f);
+    assert(fabsf(mechanism.output.shaft_target_deg[1] - (-45 + 40 - 45)) < 1e-4f);
+    assert(fabsf(mechanism.output.shaft_target_deg[2] - (67 + 40 + 45)) < 1e-4f);
+    target.axis[MECH_ROLL] = 91;
+    assert(Mechanism_SetTarget(&mechanism, &target, 100 + step * 5) == MECH_BAD_TARGET);
+    target.axis[MECH_ROLL] = NAN;
+    assert(Mechanism_SetTarget(&mechanism, &target, 100 + step * 5) == MECH_BAD_TARGET);
+}
+
+static void Test_Faults(void)
+{
+    Mechanism_Config_t config = Test_Config();
+    Mechanism_t mechanism;
+    Mechanism_Feedback_t feedback = Test_Feedback(10);
+    Mechanism_Init(&mechanism, &config, 10);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 10) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 10) == MECH_OK);
+    assert(Mechanism_SetAir(&mechanism, true, MECH_CLAW_CLOSE, 10) == MECH_OK);
+    feedback.seen[2] = false;
+    Mechanism_Tick(&mechanism, &feedback, 15);
+    assert(mechanism.state == MECH_FAULT && mechanism.fault == MECH_FEEDBACK_LOST);
+    assert(!mechanism.output.motors_enabled && !mechanism.output.pump_on);
+    assert(mechanism.output.claw == MECH_CLAW_OFF && !mechanism.zero_valid);
+    Mechanism_Stop(&mechanism);
+    assert(mechanism.state == MECH_FAULT);
+    assert(Mechanism_ClearFault(&mechanism, &feedback, 15) == MECH_FEEDBACK_LOST);
+    feedback = Test_Feedback(15);
+    assert(Mechanism_ClearFault(&mechanism, &feedback, 15) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 15) == MECH_NO_ZERO);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 15) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 15) == MECH_OK);
+    feedback = Test_Feedback(2116);
+    Mechanism_Tick(&mechanism, &feedback, 2116);
+    assert(mechanism.state == MECH_FAULT && mechanism.fault == MECH_LEASE_EXPIRED);
+    assert(!mechanism.output.motors_enabled);
+    Mechanism_Init(&mechanism, &config, 10);
+    feedback = Test_Feedback(10);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 10) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 10) == MECH_OK);
+    feedback.motor_error = true;
+    Mechanism_Tick(&mechanism, &feedback, 11);
+    assert(mechanism.fault == MECH_MOTOR_ERROR);
+    Mechanism_Init(&mechanism, &config, 10);
+    feedback = Test_Feedback(10);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 10) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 10) == MECH_OK);
+    Mechanism_Tick(&mechanism, &feedback, 111);
+    assert(mechanism.fault == MECH_FEEDBACK_LOST);
+}
+
+static void Test_AirAndClockWrap(void)
+{
+    Mechanism_Config_t config = Test_Config();
+    Mechanism_t mechanism;
+    uint32_t start_ms = UINT32_MAX - 50;
+    Mechanism_Feedback_t feedback = Test_Feedback(start_ms);
+    Mechanism_Init(&mechanism, &config, start_ms);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, start_ms) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, start_ms) == MECH_OK);
+    Mechanism_Tick(&mechanism, &feedback, 25);
+    assert(mechanism.state == MECH_MANUAL);
+    Mechanism_Stop(&mechanism);
+    assert(Mechanism_SetAir(&mechanism, true, MECH_CLAW_OPEN, 25) == MECH_OK);
+    assert(!mechanism.output.motors_enabled && mechanism.output.pump_on);
+    Mechanism_Tick(&mechanism, &feedback, 2026);
+    assert(mechanism.fault == MECH_LEASE_EXPIRED && !mechanism.output.pump_on);
+    Mechanism_Init(&mechanism, &config, 10);
+    feedback = Test_Feedback(10);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 10) == MECH_OK);
+    Mechanism_Tick(&mechanism, &feedback, 111);
+    assert(!mechanism.zero_valid);
+}
+
+int main(void)
+{
+    Test_ConfigAndMapping();
+    Test_Trajectory();
+    Test_Faults();
+    Test_AirAndClockWrap();
+    puts("mechanism tests passed");
+    return 0;
+}
