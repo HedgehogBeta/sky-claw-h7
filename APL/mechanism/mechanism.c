@@ -10,6 +10,22 @@
 #define MECH_TRAJECTORY_SPEED_FACTOR 1.875f
 #define MECH_TRAJECTORY_ACCEL_FACTOR 6.0f
 
+/* 正常流程：UNCALIBRATED --标零--> READY --使能--> HOLDING
+ *           HOLDING --目标--> MOVING --轨迹结束--> HOLDING
+ * 停止：有有效零位时回到 READY，否则回到 UNCALIBRATED。
+ * 故障：使能期间反馈异常或实际越界进入 FAULT，清故障后必须重新标零。
+ * state 是状态判断依据，原有布尔字段仅用于兼容输出和观测。
+ */
+static void Mechanism_EnterState(Mechanism_t *p_mechanism, Mechanism_State_t state)
+{
+    p_mechanism->state = state;
+    p_mechanism->zero_valid = state == MECH_STATE_READY || state == MECH_STATE_HOLDING ||
+                              state == MECH_STATE_MOVING;
+    p_mechanism->moving = state == MECH_STATE_MOVING;
+    p_mechanism->output.motors_enabled =
+        state == MECH_STATE_HOLDING || state == MECH_STATE_MOVING;
+}
+
 static bool Mechanism_IsPositive(float value)
 {
     return isfinite(value) && value > 0.0f;
@@ -40,7 +56,7 @@ bool Mechanism_ConfigValid(const Mechanism_Config_t *p_config)
 {
     if (!Mechanism_MappingValid(p_config) || !isfinite(p_config->arm_motor_per_joint) ||
         fabsf(p_config->arm_motor_per_joint) < MECH_MAPPING_EPSILON ||
-        p_config->feedback_timeout_ms == 0 || p_config->command_lease_ms == 0)
+        p_config->feedback_timeout_ms == 0)
     {
         return false;
     }
@@ -147,10 +163,8 @@ static void Mechanism_Measure(Mechanism_t *p_mechanism, const Mechanism_Feedback
 static void Mechanism_Fault(Mechanism_t *p_mechanism, Mechanism_Result_t reason)
 {
     memset(&p_mechanism->output, 0, sizeof(p_mechanism->output));
-    p_mechanism->state = MECH_FAULT;
     p_mechanism->fault = reason;
-    p_mechanism->moving = false;
-    p_mechanism->zero_valid = false;
+    Mechanism_EnterState(p_mechanism, MECH_STATE_FAULT);
 }
 
 void Mechanism_Init(Mechanism_t *p_mechanism, const Mechanism_Config_t *p_config, uint32_t now_ms)
@@ -165,7 +179,7 @@ void Mechanism_Init(Mechanism_t *p_mechanism, const Mechanism_Config_t *p_config
         p_mechanism->config = *p_config;
     }
     p_mechanism->last_tick_ms = now_ms;
-    p_mechanism->last_command_ms = now_ms;
+    Mechanism_EnterState(p_mechanism, MECH_STATE_UNCALIBRATED);
 }
 
 Mechanism_Result_t Mechanism_CaptureZero(Mechanism_t *p_mechanism,
@@ -176,9 +190,13 @@ Mechanism_Result_t Mechanism_CaptureZero(Mechanism_t *p_mechanism,
         return MECH_BAD_STATE;
     }
     Mechanism_Result_t result;
-    if (p_mechanism->state != MECH_DISABLED)
+    if (p_mechanism->state == MECH_STATE_HOLDING || p_mechanism->state == MECH_STATE_MOVING)
     {
         return MECH_BAD_STATE;
+    }
+    if (p_mechanism->state == MECH_STATE_FAULT)
+    {
+        return p_mechanism->fault;
     }
     if (!p_mechanism->config.motion_confirmed || !Mechanism_ConfigValid(&p_mechanism->config))
     {
@@ -193,8 +211,7 @@ Mechanism_Result_t Mechanism_CaptureZero(Mechanism_t *p_mechanism,
     memset(&p_mechanism->measured, 0, sizeof(p_mechanism->measured));
     memset(&p_mechanism->setpoint, 0, sizeof(p_mechanism->setpoint));
     memset(&p_mechanism->target, 0, sizeof(p_mechanism->target));
-    p_mechanism->zero_valid = true;
-    p_mechanism->last_command_ms = now_ms;
+    Mechanism_EnterState(p_mechanism, MECH_STATE_READY);
     return MECH_OK;
 }
 
@@ -206,15 +223,15 @@ Mechanism_Result_t Mechanism_Enable(Mechanism_t *p_mechanism,
         return MECH_BAD_STATE;
     }
     Mechanism_Result_t result;
-    if (p_mechanism->state != MECH_DISABLED)
+    if (p_mechanism->state == MECH_STATE_FAULT)
     {
-        return MECH_BAD_STATE;
+        return p_mechanism->fault;
     }
     if (!p_mechanism->config.motion_confirmed || !Mechanism_ConfigValid(&p_mechanism->config))
     {
         return MECH_BAD_CONFIG;
     }
-    if (!p_mechanism->zero_valid)
+    if (p_mechanism->state == MECH_STATE_UNCALIBRATED)
     {
         return MECH_NO_ZERO;
     }
@@ -228,13 +245,18 @@ Mechanism_Result_t Mechanism_Enable(Mechanism_t *p_mechanism,
     {
         return MECH_OUT_OF_RANGE;
     }
+    if (p_mechanism->state == MECH_STATE_HOLDING || p_mechanism->state == MECH_STATE_MOVING)
+    {
+        return MECH_OK;
+    }
     p_mechanism->setpoint = p_mechanism->measured;
     p_mechanism->target = p_mechanism->measured;
     p_mechanism->start = p_mechanism->measured;
-    p_mechanism->state = MECH_MANUAL;
-    p_mechanism->moving = false;
+    memcpy(p_mechanism->output.shaft_target_deg, p_feedback->shaft_deg,
+           sizeof(p_mechanism->output.shaft_target_deg));
+    memset(p_mechanism->output.shaft_speed_deg_s, 0, sizeof(p_mechanism->output.shaft_speed_deg_s));
+    Mechanism_EnterState(p_mechanism, MECH_STATE_HOLDING);
     p_mechanism->last_tick_ms = now_ms;
-    p_mechanism->last_command_ms = now_ms;
     return MECH_OK;
 }
 
@@ -254,7 +276,7 @@ Mechanism_Result_t Mechanism_SetTarget(Mechanism_t *p_mechanism, const Mechanism
         return MECH_BAD_TARGET;
     }
     float delta[2], duration_s = 0.0f;
-    if (p_mechanism->state != MECH_MANUAL)
+    if (p_mechanism->state != MECH_STATE_HOLDING && p_mechanism->state != MECH_STATE_MOVING)
     {
         return MECH_BAD_STATE;
     }
@@ -262,7 +284,7 @@ Mechanism_Result_t Mechanism_SetTarget(Mechanism_t *p_mechanism, const Mechanism
     {
         return MECH_BAD_TARGET;
     }
-    if (p_mechanism->moving)
+    if (p_mechanism->state == MECH_STATE_MOVING)
     {
         return MECH_BUSY;
     }
@@ -294,24 +316,23 @@ Mechanism_Result_t Mechanism_SetTarget(Mechanism_t *p_mechanism, const Mechanism
     p_mechanism->target = *p_pose;
     p_mechanism->duration_s = duration_s;
     p_mechanism->elapsed_s = 0;
-    p_mechanism->moving = duration_s > 0;
+    Mechanism_EnterState(p_mechanism,
+                         duration_s > 0 ? MECH_STATE_MOVING : MECH_STATE_HOLDING);
     p_mechanism->last_tick_ms = now_ms;
-    p_mechanism->last_command_ms = now_ms;
     return MECH_OK;
 }
 
-Mechanism_Result_t Mechanism_SetAir(Mechanism_t *p_mechanism, bool pump, Mechanism_Claw_t claw,
-                                    uint32_t now_ms)
+Mechanism_Result_t Mechanism_SetAir(Mechanism_t *p_mechanism, bool pump, Mechanism_Claw_t claw)
 {
     if (p_mechanism == NULL)
     {
         return MECH_BAD_STATE;
     }
-    if (p_mechanism->state == MECH_FAULT)
+    if (p_mechanism->state == MECH_STATE_FAULT)
     {
-        return MECH_BAD_STATE;
+        return p_mechanism->fault;
     }
-    if (!p_mechanism->config.pneumatics_confirmed || p_mechanism->config.command_lease_ms == 0)
+    if (!p_mechanism->config.pneumatics_confirmed)
     {
         return MECH_BAD_CONFIG;
     }
@@ -321,7 +342,6 @@ Mechanism_Result_t Mechanism_SetAir(Mechanism_t *p_mechanism, bool pump, Mechani
     }
     p_mechanism->output.pump_on = pump;
     p_mechanism->output.claw = claw;
-    p_mechanism->last_command_ms = now_ms;
     return MECH_OK;
 }
 
@@ -331,42 +351,56 @@ void Mechanism_Stop(Mechanism_t *p_mechanism)
     {
         return;
     }
+    /* 正常停止保留零位；故障或反馈丢失后停止不会恢复零位。 */
+    Mechanism_State_t next_state = MECH_STATE_UNCALIBRATED;
+    if (p_mechanism->state == MECH_STATE_READY || p_mechanism->state == MECH_STATE_HOLDING ||
+        p_mechanism->state == MECH_STATE_MOVING)
+    {
+        next_state = MECH_STATE_READY;
+    }
     memset(&p_mechanism->output, 0, sizeof(p_mechanism->output));
-    p_mechanism->moving = false;
-    if (p_mechanism->state != MECH_FAULT)
-    {
-        p_mechanism->state = MECH_DISABLED;
-    }
-}
-
-Mechanism_Result_t Mechanism_ClearFault(Mechanism_t *p_mechanism,
-                                        const Mechanism_Feedback_t *p_feedback, uint32_t now_ms)
-{
-    if (p_mechanism == NULL || p_feedback == NULL)
-    {
-        return MECH_BAD_STATE;
-    }
-    Mechanism_Result_t result;
-    if (p_mechanism->state != MECH_FAULT)
-    {
-        return MECH_BAD_STATE;
-    }
-    result = Mechanism_FeedbackStatus(p_mechanism, p_feedback, now_ms);
-    if (result != MECH_OK)
-    {
-        return result;
-    }
-    p_mechanism->state = MECH_DISABLED;
     p_mechanism->fault = MECH_OK;
-    p_mechanism->last_command_ms = now_ms;
-    return MECH_OK;
+    Mechanism_EnterState(p_mechanism, next_state);
 }
 
-void Mechanism_KeepAlive(Mechanism_t *p_mechanism, uint32_t now_ms)
+/* 三轴共用同一运动进度，起止速度和加速度均为零。 */
+static void Mechanism_UpdateTrajectory(Mechanism_t *p_mechanism, float elapsed_s, float speed[3])
 {
-    if (p_mechanism != NULL)
+    float progress, position_scale, speed_scale;
+    p_mechanism->elapsed_s = fminf(p_mechanism->elapsed_s + elapsed_s, p_mechanism->duration_s);
+    progress = p_mechanism->elapsed_s / p_mechanism->duration_s;
+    position_scale =
+        progress * progress * progress * (10.0f + progress * (-15.0f + 6.0f * progress));
+    speed_scale = 30.0f * progress * progress * (1.0f - progress) * (1.0f - progress) /
+                  p_mechanism->duration_s;
+    for (unsigned i = 0; i < MECH_AXIS_COUNT; ++i)
     {
-        p_mechanism->last_command_ms = now_ms;
+        float delta_deg = p_mechanism->target.axis[i] - p_mechanism->start.axis[i];
+        p_mechanism->setpoint.axis[i] = p_mechanism->start.axis[i] + delta_deg * position_scale;
+        speed[i] = delta_deg * speed_scale;
+    }
+    if (p_mechanism->elapsed_s >= p_mechanism->duration_s)
+    {
+        Mechanism_EnterState(p_mechanism, MECH_STATE_HOLDING);
+    }
+}
+
+/* 机构角度加上零位和传动映射，得到驱动层使用的电机输出轴目标。 */
+static void Mechanism_UpdateMotorTargets(Mechanism_t *p_mechanism, const float speed[3])
+{
+    float wrist[2], wrist_speed[2];
+    Mechanism_WristForward(&p_mechanism->config, p_mechanism->setpoint.axis[MECH_PITCH],
+                           p_mechanism->setpoint.axis[MECH_ROLL], wrist);
+    Mechanism_WristForward(&p_mechanism->config, speed[MECH_PITCH], speed[MECH_ROLL], wrist_speed);
+    p_mechanism->output.shaft_target_deg[0] =
+        p_mechanism->zero_shaft_deg[0] +
+        p_mechanism->config.arm_motor_per_joint * p_mechanism->setpoint.axis[MECH_ARM];
+    p_mechanism->output.shaft_speed_deg_s[0] =
+        p_mechanism->config.arm_motor_per_joint * speed[MECH_ARM];
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        p_mechanism->output.shaft_target_deg[i + 1] = p_mechanism->zero_shaft_deg[i + 1] + wrist[i];
+        p_mechanism->output.shaft_speed_deg_s[i + 1] = wrist_speed[i];
     }
 }
 
@@ -383,71 +417,52 @@ void Mechanism_Tick(Mechanism_t *p_mechanism, const Mechanism_Feedback_t *p_feed
         return;
     }
     float elapsed_s = (float)(now_ms - p_mechanism->last_tick_ms) * MECH_SECONDS_PER_MS;
-    float speed[3] = {0}, wrist[2], wrist_speed[2];
+    float speed[3] = {0};
+    Mechanism_Result_t result;
     p_mechanism->last_tick_ms = now_ms;
-    if ((p_mechanism->state == MECH_MANUAL || p_mechanism->output.pump_on ||
-         p_mechanism->output.claw != MECH_CLAW_OFF) &&
-        now_ms - p_mechanism->last_command_ms > p_mechanism->config.command_lease_ms)
+
+    switch (p_mechanism->state)
     {
-        Mechanism_Fault(p_mechanism, MECH_LEASE_EXPIRED);
+    case MECH_STATE_UNCALIBRATED:
+    case MECH_STATE_FAULT:
+        /* 等待显式命令；反馈恢复不会自动标零或使能。 */
         return;
-    }
-    if (p_mechanism->state != MECH_MANUAL)
-    {
-        if (p_mechanism->zero_valid)
+
+    case MECH_STATE_READY:
+        if (Mechanism_FeedbackStatus(p_mechanism, p_feedback, now_ms) == MECH_OK)
         {
-            if (Mechanism_FeedbackStatus(p_mechanism, p_feedback, now_ms) == MECH_OK)
-            {
-                Mechanism_Measure(p_mechanism, p_feedback);
-            }
-            else
-            {
-                p_mechanism->zero_valid = false;
-            }
+            Mechanism_Measure(p_mechanism, p_feedback);
+        }
+        else
+        {
+            /* 电机未使能时只作废零位，保留独立气路输出。 */
+            Mechanism_EnterState(p_mechanism, MECH_STATE_UNCALIBRATED);
         }
         return;
-    }
-    Mechanism_Result_t result = Mechanism_FeedbackStatus(p_mechanism, p_feedback, now_ms);
-    if (result != MECH_OK)
-    {
-        Mechanism_Fault(p_mechanism, result);
-        return;
-    }
-    Mechanism_Measure(p_mechanism, p_feedback);
-    if (!Mechanism_PoseValid(p_mechanism, &p_mechanism->measured))
-    {
-        Mechanism_Fault(p_mechanism, MECH_OUT_OF_RANGE);
-        return;
-    }
-    if (p_mechanism->moving)
-    {
-        float progress, position_scale, speed_scale;
-        p_mechanism->elapsed_s = fminf(p_mechanism->elapsed_s + elapsed_s, p_mechanism->duration_s);
-        progress = p_mechanism->elapsed_s / p_mechanism->duration_s;
-        position_scale =
-            progress * progress * progress * (10.0f + progress * (-15.0f + 6.0f * progress));
-        speed_scale = 30.0f * progress * progress * (1.0f - progress) * (1.0f - progress) /
-                      p_mechanism->duration_s;
-        for (unsigned i = 0; i < MECH_AXIS_COUNT; ++i)
+
+    case MECH_STATE_HOLDING:
+    case MECH_STATE_MOVING:
+        result = Mechanism_FeedbackStatus(p_mechanism, p_feedback, now_ms);
+        if (result != MECH_OK)
         {
-            float delta_deg = p_mechanism->target.axis[i] - p_mechanism->start.axis[i];
-            p_mechanism->setpoint.axis[i] = p_mechanism->start.axis[i] + delta_deg * position_scale;
-            speed[i] = delta_deg * speed_scale;
+            Mechanism_Fault(p_mechanism, result);
+            return;
         }
-        p_mechanism->moving = p_mechanism->elapsed_s < p_mechanism->duration_s;
-    }
-    Mechanism_WristForward(&p_mechanism->config, p_mechanism->setpoint.axis[MECH_PITCH],
-                           p_mechanism->setpoint.axis[MECH_ROLL], wrist);
-    Mechanism_WristForward(&p_mechanism->config, speed[MECH_PITCH], speed[MECH_ROLL], wrist_speed);
-    p_mechanism->output.motors_enabled = true;
-    p_mechanism->output.shaft_target_deg[0] =
-        p_mechanism->zero_shaft_deg[0] +
-        p_mechanism->config.arm_motor_per_joint * p_mechanism->setpoint.axis[MECH_ARM];
-    p_mechanism->output.shaft_speed_deg_s[0] =
-        p_mechanism->config.arm_motor_per_joint * speed[MECH_ARM];
-    for (unsigned i = 0; i < 2; ++i)
-    {
-        p_mechanism->output.shaft_target_deg[i + 1] = p_mechanism->zero_shaft_deg[i + 1] + wrist[i];
-        p_mechanism->output.shaft_speed_deg_s[i + 1] = wrist_speed[i];
+        Mechanism_Measure(p_mechanism, p_feedback);
+        if (!Mechanism_PoseValid(p_mechanism, &p_mechanism->measured))
+        {
+            Mechanism_Fault(p_mechanism, MECH_OUT_OF_RANGE);
+            return;
+        }
+        if (p_mechanism->state == MECH_STATE_MOVING)
+        {
+            Mechanism_UpdateTrajectory(p_mechanism, elapsed_s, speed);
+        }
+        Mechanism_UpdateMotorTargets(p_mechanism, speed);
+        return;
+
+    default:
+        Mechanism_Fault(p_mechanism, MECH_BAD_STATE);
+        return;
     }
 }

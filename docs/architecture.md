@@ -18,7 +18,7 @@ main
  ├─ HAL、时钟、GPIO、DMA、CAN、UART、TIM 初始化
  ├─ LED、蜂鸣器、CAN 启动
  ├─ DJI、Unitree 驱动初始化，电机保持失能
- ├─ 创建蓝牙、VOFA 的模块任务
+ ├─ 创建蓝牙模块任务
  ├─ osKernelInitialize
  ├─ MX_FREERTOS_Init
  │   ├─ 创建 AlarmTask
@@ -29,14 +29,14 @@ main
 
 TIM2 每毫秒调用 DJI 与 Unitree 驱动。`Mechanism_TimerCallback` 每 5 ms 发一个 CMSIS-RTOS2 任务标志；机构任务等待标志后读取反馈、检查失效条件、处理手动命令并更新电机目标。轨迹计算在任务中完成，中断负责电机调度和反馈解析。
 
-CAN 反馈在接收回调中直接解析；Unitree 使用 UART7 半双工 RS485、DMA 双缓冲及 IDLE 中断。应用读取反馈和更新电机目标时用短临界区避免中断同时修改。VOFA 独立任务每 10 ms 发观测帧。
+CAN 反馈在接收回调中直接解析；Unitree 使用 UART7 半双工 RS485、DMA 双缓冲及 IDLE 中断。应用读取反馈和更新电机目标时用短临界区避免中断同时修改。机构观测量每 5 ms 更新到 `g_mechanism_debug`，供 Keil Watch 查看。
 
 TIM1 为 HAL 毫秒时基。TIM3 / TIM4 / TIM5 已初始化，默认未启动。IMU 驱动保留，默认未创建其任务。蓝牙通信任务已创建，机构命令当前使用 `g_mechanism_debug`。
 
 ## 机构模块
 
-- `mechanism.c/.h`：零位、失能/手动/故障状态、腕部映射、三轴同步轨迹。
-- `mechanism_app.c/.h`：H7 电机和气路适配、调试器入口、VOFA 变量。
+- `mechanism.c/.h`：显式运动状态机、零位与故障处理、腕部映射、三轴同步轨迹；状态定义在 `Mechanism_State_t`，周期状态分支在 `Mechanism_Tick`。
+- `mechanism_app.c/.h`：H7 电机和气路适配、统一 Watch 结构体。
 - `mechanism_config.c/.h`：外部传动关系、关节范围、速度和加速度。
 - `mechanism_board_config.h`：电机增益、电流上限、泵和阀接线。
 

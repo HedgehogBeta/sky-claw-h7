@@ -25,7 +25,7 @@ LED1～4：PB3 / PB4 / PB5 / PB6，高电平点亮；蜂鸣器：PB0，高电平
 | USART3 | PD8 / PD9 | 115200 | 预留，有 RX DMA |
 | UART4 | PA0 / PA1 | 115200 | 预留，有 RX DMA |
 | USART6 | PC6 / PC7 | 115200 | 蓝牙串口，机构控制接口尚未接入 |
-| UART7 | PE8 / PE7 | 4000000 | GO 电机 RS485，ID 0 |
+| UART7 | PE8 / PE7 | 4000000 | GO-M8010-6 电机 RS485，配置 ID 0 |
 | UART9 | PD15 / PD14 | 115200 | VOFA，JustFloat |
 
 UART7 的收发方向控制为 PG1，高电平发送、低电平接收。GO 电机的电源和信号按实际型号及板卡端口确认。USB-TTL 调试接口与开发板共地。

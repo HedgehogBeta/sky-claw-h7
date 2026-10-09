@@ -25,7 +25,7 @@
 
 ```c
 /* APL/app_cfg.h */
-#define APP_VOFA_ENABLE          1     /* 1 = 编译并使用 VOFA+ 模块 */
+#define APP_VOFA_ENABLE          0     /* 1 = 编译并使用 VOFA+ 模块 */
 #define APP_VOFA_TASK_PERIOD_MS  10U   /* 发送周期(ms),main.c 里作为实参传给 VOFA_TaskCreate() */
 
 /* FML/vofa/vofa.h */
@@ -46,8 +46,6 @@
 | `VOFA_TaskCreate(period_ms)` | 函数 | 创建发送任务,`period_ms` = 发送周期(ms,须 > 0);`main()` 里调度器启动前调用一次 |
 | `VOFA_GetChannelCount()` | 函数 | 当前帧通道数(已注册的最大通道号 + 1) |
 | `VOFA_GetDropCount()` | 函数 | 因串口忙而丢掉的帧数 |
-
-当前机构已占用通道 0～7，映射见 [控制方案](control-plan.md)。增加观测量时调整已有映射，或扩大通道数并核对带宽。
 
 ## 4. 用法
 

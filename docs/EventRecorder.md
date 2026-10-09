@@ -4,7 +4,7 @@
 
 Event Recorder 是 ARM CMSIS-View 提供的运行时调试工具，可记录程序运行过程中产生的事件，并在 Keil µVision 中进行查看。
 
-当前工程未启用 Event Recorder；本文保留团队的可选调试配置方法。常规调试使用 Keil Watch 和 VOFA，按需通过 RTE 添加 Event Recorder 组件。
+当前工程未启用 Event Recorder；本文保留团队的可选调试配置方法。常规调试使用 Keil Watch，按需通过 RTE 添加 Event Recorder 组件。
 
 本文仅介绍 Event Recorder 在本工程中的配置、基本使用方法以及已知注意事项，不对具体的调试方法、事件设计方式或性能分析方法作统一规定。使用者可根据实际需求自行选择使用方式。
 

@@ -8,7 +8,6 @@
 #include "mechanism_board_config.h"
 #include "mechanism_config.h"
 #include "solenoid.h"
-#include "vofa.h"
 #include <math.h>
 
 #define MECH_DEG_PER_RAD 57.2957795131f
@@ -19,16 +18,6 @@ static osThreadId_t s_task_handle;
 #define MECH_TICK_FLAG 1U
 #define MECH_TASK_STACK_BYTES 2048U
 static bool s_air_ready;
-static float s_arm_target, s_arm_feedback, s_pitch_target, s_pitch_feedback;
-static float s_roll_target, s_roll_feedback, s_state, s_fault;
-VOFA_ADD_FLOAT(0, s_arm_target);
-VOFA_ADD_FLOAT(1, s_arm_feedback);
-VOFA_ADD_FLOAT(2, s_pitch_target);
-VOFA_ADD_FLOAT(3, s_pitch_feedback);
-VOFA_ADD_FLOAT(4, s_roll_target);
-VOFA_ADD_FLOAT(5, s_roll_feedback);
-VOFA_ADD_FLOAT(6, s_state);
-VOFA_ADD_FLOAT(7, s_fault);
 
 static uint32_t Mechanism_IrqLock(void)
 {
@@ -37,22 +26,81 @@ static uint32_t Mechanism_IrqLock(void)
     return mask;
 }
 
-static void Mechanism_ReadFeedback(Mechanism_Feedback_t *p_feedback)
+/* 调用时持有中断锁，避免反馈帧更新到一半。 */
+static Mechanism_DebugDji_t Mechanism_ReadDjiDebug(const DJMotor *p_motor)
+{
+    const Mechanism_DebugDji_t debug = {
+        .angle_deg = p_motor->valNow.angle_deg,
+        .speed_rpm = p_motor->valNow.speed_rpm,
+        .current_a = p_motor->valNow.current_A,
+        .temperature_c = p_motor->valNow.temperature_C,
+        .last_rx_ms = p_motor->error.last_rx_ms,
+        .received = p_motor->error.received};
+    return debug;
+}
+
+static uint32_t Mechanism_ReadFeedback(Mechanism_Feedback_t *p_feedback)
 {
     uint32_t mask = Mechanism_IrqLock();
-    DJMotor *p_left_motor = &DJmotor[MECH_DJI_LEFT_INDEX];
-    DJMotor *p_right_motor = &DJmotor[MECH_DJI_RIGHT_INDEX];
-    p_feedback->shaft_deg[0] = Unitree_motors[0].data.position * MECH_DEG_PER_RAD;
-    p_feedback->shaft_deg[1] = p_left_motor->valNow.angle_deg;
-    p_feedback->shaft_deg[2] = p_right_motor->valNow.angle_deg;
-    p_feedback->rx_ms[0] = Unitree_motors[0].data.last_rx_ms;
-    p_feedback->rx_ms[1] = p_left_motor->error.last_rx_ms;
-    p_feedback->rx_ms[2] = p_right_motor->error.last_rx_ms;
-    p_feedback->seen[0] = Unitree_motors[0].data.correct != 0;
-    p_feedback->seen[1] = p_left_motor->error.received;
-    p_feedback->seen[2] = p_right_motor->error.received;
-    p_feedback->motor_error = Unitree_motors[0].data.error != UNITREE_NO_ERR;
+    /* 时间与反馈在同一临界区捕获，避免接收时间晚于本次检查时间。 */
+    uint32_t now_ms = HAL_GetTick();
+    const UnitreeMotorData_t *p_go = &Unitree_motors[0].data;
+    Mechanism_DebugGo_t go = {
+        .angle_deg = p_go->position * MECH_DEG_PER_RAD,
+        .speed_deg_s = p_go->speed * MECH_DEG_PER_RAD,
+        .torque_nm = p_go->torque,
+        .temperature_c = p_go->temperature,
+        .error = p_go->error,
+        .bad_msg = p_go->bad_msg,
+        .last_rx_ms = p_go->last_rx_ms,
+        .received = p_go->correct != 0};
+    Mechanism_DebugDji_t left = Mechanism_ReadDjiDebug(&DJmotor[MECH_DJI_LEFT_INDEX]);
+    Mechanism_DebugDji_t right = Mechanism_ReadDjiDebug(&DJmotor[MECH_DJI_RIGHT_INDEX]);
     __set_PRIMASK(mask);
+
+    uint32_t timeout_ms = s_mechanism.config.feedback_timeout_ms;
+    go.age_ms = now_ms - go.last_rx_ms;
+    left.age_ms = now_ms - left.last_rx_ms;
+    right.age_ms = now_ms - right.last_rx_ms;
+    go.online = go.received && go.age_ms <= timeout_ms;
+    left.online = left.received && left.age_ms <= timeout_ms;
+    right.online = right.received && right.age_ms <= timeout_ms;
+    g_mechanism_debug.go = go;
+    g_mechanism_debug.left = left;
+    g_mechanism_debug.right = right;
+
+    p_feedback->shaft_deg[0] = go.angle_deg;
+    p_feedback->shaft_deg[1] = left.angle_deg;
+    p_feedback->shaft_deg[2] = right.angle_deg;
+    p_feedback->rx_ms[0] = go.last_rx_ms;
+    p_feedback->rx_ms[1] = left.last_rx_ms;
+    p_feedback->rx_ms[2] = right.last_rx_ms;
+    p_feedback->seen[0] = go.received;
+    p_feedback->seen[1] = left.received;
+    p_feedback->seen[2] = right.received;
+    p_feedback->motor_error = go.error != UNITREE_NO_ERR;
+    return now_ms;
+}
+
+static Mechanism_DebugPose_t Mechanism_DebugPose(const Mechanism_Pose_t *p_pose)
+{
+    const Mechanism_DebugPose_t debug = {
+        .arm_deg = p_pose->axis[MECH_ARM],
+        .pitch_deg = p_pose->axis[MECH_PITCH],
+        .roll_deg = p_pose->axis[MECH_ROLL]};
+    return debug;
+}
+
+static void Mechanism_UpdateDebug(void)
+{
+    g_mechanism_debug.state = s_mechanism.state;
+    g_mechanism_debug.zero_valid = s_mechanism.zero_valid;
+    g_mechanism_debug.moving = s_mechanism.moving;
+    g_mechanism_debug.fault = s_mechanism.fault;
+    g_mechanism_debug.measured = Mechanism_DebugPose(&s_mechanism.measured);
+    g_mechanism_debug.setpoint = Mechanism_DebugPose(&s_mechanism.setpoint);
+    g_mechanism_debug.target = Mechanism_DebugPose(&s_mechanism.target);
+    g_mechanism_debug.output = s_mechanism.output;
 }
 
 static bool Mechanism_MotorConfigValid(void)
@@ -219,14 +267,8 @@ static void Mechanism_ConsumeCommand(const Mechanism_Feedback_t *p_feedback, uin
         else
         {
             result = Mechanism_SetAir(&s_mechanism, g_mechanism_debug.pump_on != 0,
-                                      (Mechanism_Claw_t)g_mechanism_debug.claw, now_ms);
+                                      (Mechanism_Claw_t)g_mechanism_debug.claw);
         }
-        break;
-    case MECH_CMD_KEEPALIVE:
-        Mechanism_KeepAlive(&s_mechanism, now_ms);
-        break;
-    case MECH_CMD_CLEAR_FAULT:
-        result = Mechanism_ClearFault(&s_mechanism, p_feedback, now_ms);
         break;
     default:
         result = MECH_BAD_TARGET;
@@ -246,25 +288,20 @@ static void Mechanism_Task(void *argument)
     config.pneumatics_confirmed = s_air_ready;
     config.motion_confirmed = config.motion_confirmed && Mechanism_MotorConfigValid();
     Mechanism_Init(&s_mechanism, &config, HAL_GetTick());
+    g_mechanism_debug.motion_ready = config.motion_confirmed && Mechanism_ConfigValid(&config);
+    g_mechanism_debug.air_ready = s_air_ready;
+    Mechanism_UpdateDebug();
     for (;;)
     {
         osThreadFlagsWait(MECH_TICK_FLAG, osFlagsWaitAny, osWaitForever);
         Mechanism_Feedback_t feedback;
-        uint32_t now_ms = HAL_GetTick();
-        Mechanism_ReadFeedback(&feedback);
-        /* 先处理失效条件，再消费命令，心跳不会覆盖已发生的超时。 */
+        uint32_t now_ms = Mechanism_ReadFeedback(&feedback);
+        /* 先处理实际反馈故障，再消费命令，避免新目标掩盖故障。 */
         Mechanism_Tick(&s_mechanism, &feedback, now_ms);
         Mechanism_ConsumeCommand(&feedback, now_ms);
         Mechanism_Tick(&s_mechanism, &feedback, now_ms);
         Mechanism_WriteOutputs(&s_mechanism.output);
-        s_arm_target = s_mechanism.setpoint.axis[MECH_ARM];
-        s_arm_feedback = s_mechanism.measured.axis[MECH_ARM];
-        s_pitch_target = s_mechanism.setpoint.axis[MECH_PITCH];
-        s_pitch_feedback = s_mechanism.measured.axis[MECH_PITCH];
-        s_roll_target = s_mechanism.setpoint.axis[MECH_ROLL];
-        s_roll_feedback = s_mechanism.measured.axis[MECH_ROLL];
-        s_state = (float)s_mechanism.state;
-        s_fault = (float)s_mechanism.fault;
+        Mechanism_UpdateDebug();
     }
 }
 

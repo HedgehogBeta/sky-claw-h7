@@ -28,6 +28,5 @@ const Mechanism_Config_t g_mechanism_config =
     .wrist_motor_speed_deg_s = {0.0f, 0.0f},
     .wrist_motor_accel_deg_s2 = {0.0f, 0.0f},
 
-    .feedback_timeout_ms = 100U,
-    .command_lease_ms = 2000U
+    .feedback_timeout_ms = 100U
 };

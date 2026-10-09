@@ -16,12 +16,6 @@ typedef enum
 } Mechanism_Axis_t;
 typedef enum
 {
-    MECH_DISABLED,
-    MECH_MANUAL,
-    MECH_FAULT
-} Mechanism_State_t;
-typedef enum
-{
     MECH_CLAW_OFF,
     MECH_CLAW_OPEN,
     MECH_CLAW_CLOSE
@@ -36,9 +30,18 @@ typedef enum
     MECH_MOTOR_ERROR,
     MECH_BAD_TARGET,
     MECH_OUT_OF_RANGE,
-    MECH_BUSY,
-    MECH_LEASE_EXPIRED
+    MECH_BUSY
 } Mechanism_Result_t;
+
+/* 运动状态；气路可在电机失能时单独工作，不增加运动状态。 */
+typedef enum
+{
+    MECH_STATE_UNCALIBRATED = 0, /* 电机失能，等待标零 */
+    MECH_STATE_READY = 1,       /* 零位有效，等待使能 */
+    MECH_STATE_HOLDING = 2,     /* 电机使能，保持给定姿态 */
+    MECH_STATE_MOVING = 3,      /* 电机使能，执行同步轨迹 */
+    MECH_STATE_FAULT = 4        /* 全部输出停止，等待停止命令清除故障 */
+} Mechanism_State_t;
 
 /* 应用角度和电机减速器输出轴角度均使用度，内部减速比由电机驱动处理。 */
 typedef struct
@@ -59,7 +62,6 @@ typedef struct
     float wrist_motor_speed_deg_s[2];
     float wrist_motor_accel_deg_s2[2];
     uint32_t feedback_timeout_ms;
-    uint32_t command_lease_ms;
 } Mechanism_Config_t;
 typedef struct
 {
@@ -79,13 +81,14 @@ typedef struct
 typedef struct
 {
     Mechanism_Config_t config;
-    Mechanism_State_t state;
-    Mechanism_Result_t fault;
+    Mechanism_State_t state;  /* 状态机的当前状态，仅由机构接口更新 */
+    Mechanism_Result_t fault; /* FAULT 状态的停止原因，停止命令清除 */
+    /* 以下观测字段由 state 同步，保留原调用和 Watch 用法，请勿直接修改。 */
     bool zero_valid; /* 本次上电的机械零位有效 */
     bool moving;     /* 轨迹尚未结束，与实际到位状态独立 */
     float zero_shaft_deg[3];
     Mechanism_Pose_t measured, setpoint, target, start;
-    uint32_t last_tick_ms, last_command_ms;
+    uint32_t last_tick_ms;
     float elapsed_s, duration_s;
     Mechanism_Output_t output;
 } Mechanism_t;
@@ -110,15 +113,9 @@ Mechanism_Result_t Mechanism_Enable(Mechanism_t *p_mechanism,
 Mechanism_Result_t Mechanism_SetTarget(Mechanism_t *p_mechanism, const Mechanism_Pose_t *p_pose,
                                        uint32_t now_ms);
 /** @brief 按已确认的气路配置设置泵/夹爪，电机可保持失能。 */
-Mechanism_Result_t Mechanism_SetAir(Mechanism_t *p_mechanism, bool pump_on, Mechanism_Claw_t claw,
-                                    uint32_t now_ms);
-/** @brief 停止电机和气路输出，保留故障锁存状态。 */
+Mechanism_Result_t Mechanism_SetAir(Mechanism_t *p_mechanism, bool pump_on, Mechanism_Claw_t claw);
+/** @brief 停止电机和气路输出，清除故障记录；故障后的零位仍需重新标定。 */
 void Mechanism_Stop(Mechanism_t *p_mechanism);
-/** @brief 反馈恢复后清除故障，进入失能状态并等待重新标定。 */
-Mechanism_Result_t Mechanism_ClearFault(Mechanism_t *p_mechanism,
-                                        const Mechanism_Feedback_t *p_feedback, uint32_t now_ms);
-/** @brief 刷新手动控制租期，避免无人操作时持续驱动。 */
-void Mechanism_KeepAlive(Mechanism_t *p_mechanism, uint32_t now_ms);
 /** @brief 周期更新反馈、失效检查和轨迹，所有输出由调用者下发。 */
 void Mechanism_Tick(Mechanism_t *p_mechanism, const Mechanism_Feedback_t *p_feedback,
                     uint32_t now_ms);

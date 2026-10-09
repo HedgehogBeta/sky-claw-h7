@@ -6,7 +6,6 @@ STM32H723 + FreeRTOS：一台 Unitree 控制机械臂角度，两台 M2006 差�
 
 完整资料见 [文档索引](docs/README.md)。
 
-- [相对模板的改动](docs/template-changes.md)：逐项说明应用、驱动与工程接入变化。
 - [控制方案](docs/control-plan.md)：控制关系、单位、任务与调试步骤。
 - [待确定参数](docs/parameters.md)：机械、电机、气路和验收参数。
 - [C 语言规范](docs/coding-standard.md)：本工程采用的团队规范。
@@ -21,6 +20,8 @@ STM32H723 + FreeRTOS：一台 Unitree 控制机械臂角度，两台 M2006 差�
 - 电机增益、气路接线：`APL/mechanism/mechanism_board_config.h`。
 
 上电读取电机反馈，电机保持失能，气路保持关闭。运动参数和增益确认前，使能命令返回 `MECH_BAD_CONFIG`；气路确认前，气路命令也返回该错误。
+
+Keil Watch 添加 `g_mechanism_debug` 即可查看命令、三轴角度、使能/零位/故障、电机反馈及气路输出。命令保留停止、标零、使能、设置角度和设置气路五项，无需心跳续期；停止命令同时清除故障记录。字段和操作顺序见 [控制方案](docs/control-plan.md)。
 
 ## 编译与验证
 

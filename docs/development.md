@@ -31,7 +31,7 @@
 - 新的电机驱动接入初始化、接收回调和周期调度；发送频率按实际协议确定。
 - 新 UART 的 DMA 缓冲和接收恢复归使用该 UART 的模块；IRQ 层按句柄分发。
 - 新任务在 `MX_FREERTOS_Init` 的 USER CODE 区调用模块的创建函数，长业务放在任务中。
-- 调试量通过 VOFA 注册；现有八通道映射见 [VOFA 说明](vofa_plus.md)。
+- 机构调试量加入 `g_mechanism_debug`，由机构任务更新，供 Keil Watch 查看；字段见 [控制方案](control-plan.md)。
 
 ## 验证
 
