@@ -36,7 +36,7 @@ extern "C"
     {
         volatile int16_t current_raw;  // 直接设置电流
         volatile float angle_deg;      // 输出角度, degree
-        volatile float speed_rpm;      /* 目标和反馈均为减速器输出轴 rpm */
+        volatile int16_t speed_rpm;    // valSet: 输出轴 rpm;valNow: 转子 rpm(原始反馈),m2006额定转速为416rpm,m3508为469rpm
         volatile float current_A;      // 反馈电流, A
         volatile int16_t PulseRead;    // raw encoder pulse
         volatile int16_t PulseGap;     // pulse delta
@@ -46,7 +46,7 @@ extern "C"
 
     typedef struct
     {
-        uint16_t PulsePerRound;   /* 转子每圈 8192 计数 */
+        uint16_t PulsePerRound;   //           8191
         float Gear_ratio;         // mechanism ratio
         float Reduction_ratio;    // motor reducer ratio
         int16_t CurrentLimit_raw; // output current limit, raw
@@ -77,14 +77,16 @@ extern "C"
 
     typedef struct
     {
+        volatile int32_t pulseLock; // 原先用于使能固定的字段,现在已无用
         uint16_t zeroCnt;
         uint16_t GapCnt;
     } DJmotorArgum;
 
     typedef struct
     {
-        volatile uint32_t last_rx_ms;
-        volatile bool received;
+        volatile uint32_t lastRxTime;
+        uint16_t stuckCount;
+        uint16_t timeoutCount;
     } DJmotorError;
 
     typedef struct

@@ -173,8 +173,10 @@ int main(void)
 #if APP_VOFA_ENABLE
   VOFA_TaskCreate(APP_VOFA_TASK_PERIOD_MS);
 #endif
-  /* UART 接收由各设备模块在初始化时启动。 */
-  /* 气路由机构模块按确认后的接线初始化。 */
+  /* 各 UART 接收由模块自己启动(蓝牙/IMU 的接收由各自的接收任务在进循环前启动,
+     Unitree 在每帧命令发送完成后启动定长应答接收),main 里无需统一启动 */
+  Solenoid_Init(SOLENOID_BUS1);
+	// printf("Sys All Online \n");
 
   /* USER CODE END 2 */
 

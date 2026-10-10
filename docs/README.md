@@ -5,12 +5,12 @@
 | 文档 | 何时阅读 |
 | --- | --- |
 | [控制方案](control-plan.md) | 理解三轴、气路、状态和手动操作 |
-| [待确定参数](parameters.md) | 与机械组确认数据、填写配置 |
+| [参数配置](parameters.md) | 与机械组确认数据、填写配置 |
 | [工程结构](architecture.md) | 查找任务、中断、启动和内存布局 |
 | [硬件接口](hardware_notes.md) | 接 CAN、RS485、VOFA、气路 |
 | [二次开发指南](development.md) | 增加功能或重新生成 CubeMX |
 | [C 语言规范](coding-standard.md) | 编写和审查 C 代码 |
-| [VOFA 调试](vofa_plus.md) | 注册观测量、配置串口波形 |
+| [VOFA 调试](vofa_plus.md) | 注册观测变量、配置串口波形 |
 | [蓝牙模块](bluetooth.md) | 后续接入串口上位机控制 |
 | [Event Recorder](EventRecorder.md) | 按需启用 Keil 事件记录，当前未启用 |
 
@@ -27,4 +27,4 @@
 | [硬件 FAQ](reference/硬件FAQ.md) | 原仓库积累的硬件问题 |
 | [电控 FAQ](reference/电控组FAQ.md) | 团队问题记录格式 |
 
-迁移来源为控制组仓库的 `docs/`、H7 模板 `DOCS/` 及无线调试器资料，相关图片和 PDF 已随文档迁入。工程结构、引脚和通信说明按天空爪当前源码更新；团队技术指南保留原文经验，实际机构参数和操作以本工程配置及台架验证为准。
+接口与配置以当前源码为准，实物动作以台架验证为准。

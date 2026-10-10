@@ -55,12 +55,12 @@ void DJmotor_Init(void)
 
     dj2006_param.Gear_ratio = 1.0f;
     dj2006_param.Reduction_ratio = M2006_RATIO;
-    dj2006_param.PulsePerRound = 8192U;
+    dj2006_param.PulsePerRound = 8191U;
     dj2006_param.CurrentLimit_raw = 10000;
 
     dj3508_param.Gear_ratio = 1.0f;
     dj3508_param.Reduction_ratio = M3508_RATIO;
-    dj3508_param.PulsePerRound = 8192U;
+    dj3508_param.PulsePerRound = 8191U;
     dj3508_param.CurrentLimit_raw = 16000;
 
     limit.CurrentLimitFlag = true;
@@ -82,11 +82,13 @@ void DJmotor_Init(void)
     statusFlag.StuckFlag = false;
     statusFlag.ZeroFlag = false;
 
+    argum.pulseLock = 0;
     argum.zeroCnt = 0;
     argum.GapCnt = 0;
 
-    error.last_rx_ms = 0;
-    error.received = false;
+    error.lastRxTime = 0;
+    error.stuckCount = 0;
+    error.timeoutCount = 0;
 
     for (uint32_t i = 0; i < USE_DJNUM; i++)
     {
@@ -98,7 +100,6 @@ void DJmotor_Init(void)
         motor->limit = limit;
         motor->argum = argum;
         motor->error = error;
-        motor->MODE_Cur = DJ_Disable;
         motor->valSet.current_raw = 0;
         motor->valSet.angle_deg = 0.0f;
         motor->valSet.speed_rpm = 0;
@@ -106,7 +107,6 @@ void DJmotor_Init(void)
         motor->valNow.PulseTotal = 0;
         motor->valPre.PulseRead = 0;
 
-        motor->ID = (uint8_t)(i + 1U);
         if (!is_M3508(motor->ID))
         {
             motor->ID = (uint8_t)(i + 1U);
@@ -136,6 +136,7 @@ void DJmotor_SetZero(DJMotorPointer motor)
     motor->statusFlag.IsSetZero = false;
     motor->valNow.angle_deg = 0.0f;
     motor->valNow.PulseTotal = 0;
+    motor->argum.pulseLock = 0;
 }
 
 void DJmotor_AngleCalculate(DJMotorPointer motor)
@@ -153,6 +154,10 @@ void DJmotor_AngleCalculate(DJMotorPointer motor)
     motor->valNow.angle_deg = (float)motor->valNow.PulseTotal * 360.0f /
                               ((float)motor->param.PulsePerRound * Get_Total_Ratio(motor));
 
+    if (motor->Begin) // 废弃字段
+    {
+        motor->argum.pulseLock = motor->valNow.PulseTotal;
+    }
 
     if (motor->statusFlag.IsSetZero)
     {
@@ -165,8 +170,7 @@ void DJmotor_AngleCalculate(DJMotorPointer motor)
 
 void DJmotor_Receive(FDCAN_RxHeaderTypeDef Rxheader, uint8_t *Rx_data)
 {
-    if (Rx_data == NULL || Rxheader.DataLength != FDCAN_DLC_BYTES_8 ||
-        (Rxheader.IdType != FDCAN_STANDARD_ID) ||
+    if ((Rxheader.IdType != FDCAN_STANDARD_ID) ||
         (Rxheader.RxFrameType != FDCAN_DATA_FRAME) ||
         (Rxheader.Identifier < 0x201U) || (Rxheader.Identifier > 0x208U))
     {
@@ -199,8 +203,7 @@ void DJmotor_Receive(FDCAN_RxHeaderTypeDef Rxheader, uint8_t *Rx_data)
 
     motor->valNow.speed_rpm = (float)speed_raw / Get_Total_Ratio(motor);
 
-    motor->error.last_rx_ms = HAL_GetTick();
-    motor->error.received = true;
+    motor->error.lastRxTime = 0;
     DJmotor_AngleCalculate(motor);
 }
 
@@ -244,13 +247,12 @@ void DJmotor_SpeedMode(DJMotorPointer motor)
 {
     if (motor->limit.RPMLimitFlag)
     {
-        motor->valSet.speed_rpm = ClampPeak(motor->valSet.speed_rpm, motor->limit.SpeedRPMLimit);
+        motor->valSet.speed_rpm = ClampPeak(motor->velPID.SetVal, motor->limit.SpeedRPMLimit);
     }
     motor->velPID.SetVal = (float)motor->valSet.speed_rpm * Get_Total_Ratio(motor);
     motor->velPID.CurVal = (float)motor->valNow.speed_rpm * Get_Total_Ratio(motor);
-    motor->valSet.current_raw = (int16_t)ClampPeak(
-        (float)motor->valSet.current_raw + PID_Calculate(&motor->velPID),
-        motor->param.CurrentLimit_raw);
+    motor->valSet.current_raw += PID_Calculate(&motor->velPID);
+    motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
 }
 
 void DJmotor_PositionMode(DJMotorPointer motor)
@@ -272,9 +274,8 @@ void DJmotor_PositionMode(DJMotorPointer motor)
     }
     motor->velPID.CurVal = (float)motor->valNow.speed_rpm * Get_Total_Ratio(motor);
 
-    motor->valSet.current_raw = (int16_t)ClampPeak(
-        (float)motor->valSet.current_raw + PID_Calculate(&motor->velPID),
-        motor->param.CurrentLimit_raw);
+    motor->valSet.current_raw += PID_Calculate(&motor->velPID);
+    motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
 }
 
 void DJmotor_ZeroMode(DJMotorPointer motor)
@@ -295,6 +296,37 @@ void DJmotor_ZeroMode(DJMotorPointer motor)
             PID_Reset(&motor->posPID);
             PID_Reset(&motor->velPID);
             DJmotor_SetZero(motor);
+        }
+    }
+}
+
+static void DJmotor_Monitor(DJMotorPointer motor)
+{
+
+    if (motor->valNow.PulseGap < 5 && motor->valNow.current_raw > 3000)
+    {
+        if (motor->error.stuckCount++ > 500U)
+        {
+            motor->error.stuckCount = 0;
+            motor->statusFlag.StuckFlag = true;
+            if (motor->limit.IsLooseStuck)
+            {
+                motor->MODE_Set = DJ_Disable;
+            }
+        }
+    }
+    else
+    {
+        motor->error.stuckCount = 0;
+    }
+
+    if (motor->error.lastRxTime++ > 50U)
+    {
+        if (motor->error.timeoutCount++ > 20U)
+        {
+            motor->error.timeoutCount = 0;
+            motor->MODE_Set = DJ_Disable;
+            motor->statusFlag.Overtimeflag = true;
         }
     }
 }
@@ -328,6 +360,7 @@ void DJmotor_Func(void)
 
         if (motor->Begin)
         {
+            // DJmotor_Monitor(motor);
             DJmotor_SwitchMode(motor);
 
             switch (motor->MODE_Cur)
@@ -348,7 +381,7 @@ void DJmotor_Func(void)
                 break;
             case DJ_Current:
                 /* 直通电流:任务层每周期写 valSet.current_raw,这里补限幅 */
-                motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
+                ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
                 break;
             default:
                 break;

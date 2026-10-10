@@ -1,32 +1,25 @@
 /** @file mechanism_config.c
- *  @brief 机械参数与控制限幅。
+ *  @brief 机械传动、行程与运动速度，全部以减速器输出轴为基准。
  */
 #include "mechanism_config.h"
-#include "mechanism_board_config.h"
 
-/* 先填写参数并完成台架验证，再确认运动控制。 */
-const Mechanism_Config_t g_mechanism_config =
-{
-    .motion_confirmed = false,
-    .pneumatics_confirmed = MECH_PNEUMATICS_CONFIRMED,
+const Mechanism_Config_t g_mechanism_config = {
+    /* 差速关系：L = pitch_ratio * pitch + roll_ratio * roll；
+     *           R = right_direction * (pitch_ratio * pitch - roll_ratio * roll)。
+     * 正负号按机械零位、小角度单轴测试确认；两侧使用相同齿轮传动。
+     */
+    .arm_motor_ratio = 0.0f,
+    .pitch_motor_ratio = 0.0f,
+    .roll_motor_ratio = 0.0f,
+    .right_motor_direction = 1,
 
-    /* 带符号的外部传动比，内部电机减速比由驱动处理。 */
-    .arm_motor_per_joint = 0.0f,
-    .wrist =
-    {
-        {0.0f, 0.0f}, /* 左电机：俯仰系数、旋转系数 */
-        {0.0f, 0.0f}  /* 右电机：俯仰系数、旋转系数 */
-    },
+    /* 关节允许范围（deg），必须包含约定的 0° 机械零位。 */
+    .arm_range = {0.0f, 0.0f},
+    .pitch_range = {0.0f, 0.0f},
+    .roll_range = {0.0f, 0.0f},
 
-    /* 最小角度、最大角度、最大速度、最大加速度：deg、deg/s、deg/s²。 */
-    .axis =
-    {
-        [MECH_ARM]   = {0.0f, 0.0f, 0.0f, 0.0f},
-        [MECH_PITCH] = {0.0f, 0.0f, 0.0f, 0.0f},
-        [MECH_ROLL]  = {0.0f, 0.0f, 0.0f, 0.0f}
-    },
-    .wrist_motor_speed_deg_s = {0.0f, 0.0f},
-    .wrist_motor_accel_deg_s2 = {0.0f, 0.0f},
-
-    .feedback_timeout_ms = 100U
+    /* 先用慢速调试；组合运动超过电机速度上限时自动延长运动时间。 */
+    .move_time_s = 2.0f,
+    .go_speed_limit_deg_s = 30.0f,
+    .wrist_speed_limit_rpm = 60
 };

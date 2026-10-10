@@ -65,7 +65,7 @@ void MX_TIM2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM2_Init 2 */
-  /* 由 main 在驱动与任务创建完成后启动。 */
+  /* 由 MX_FREERTOS_Init 在驱动与任务创建完成后启动。 */
   /* USER CODE END TIM2_Init 2 */
 
 }

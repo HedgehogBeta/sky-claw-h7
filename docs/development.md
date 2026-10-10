@@ -1,45 +1,29 @@
-# 二次开发与 CubeMX 再生成
+# 修改与 CubeMX 再生成
 
-## 修改位置
+## 修改入口
 
-| 修改内容 | 入口 |
+| 内容 | 位置 |
 | --- | --- |
-| 齿轮映射、关节范围、轨迹速度/加速度 | `APL/mechanism/mechanism_config.c` |
-| 电机增益、电流/速度上限、气路接线 | `APL/mechanism/mechanism_board_config.h` |
-| 电机数量、内部减速比、总线 | `FML/motor/motor_cfg.h` |
-| 手动指令和硬件下发 | `APL/mechanism/mechanism_app.c` |
-| 板载 LED、蜂鸣器、RS485 方向引脚 | `HDL/bsp_board_config.h` |
-| UART 角色映射 | `FML/fm_uart_cfg.h` |
-| 外设引脚、DMA、中断优先级 | `SkyClawH7.ioc` |
+| 差速关系、行程、运动时间和速度上限 | `APL/mechanism/mechanism_config.c` |
+| 机构控制开关、闭环增益、电流上限、气路接线 | `APL/mechanism/mechanism_config.h` |
+| 标零、轨迹、状态与故障 | `APL/mechanism/mechanism.c` |
+| Watch 命令、反馈与硬件输出 | `APL/mechanism/mechanism_app.c` |
+| 电机开关、数量、内部减速比与总线 | `FML/motor/motor_cfg.h` |
+| UART 角色和板级资源 | `FML/fm_uart_cfg.h`、`HDL/bsp_board_config.h` |
 
-应用沿用“一项机构任务、控制逻辑与硬件适配分开”的组织方式。新增功能按实际动作扩展现有模块，命名和接口见 [C 语言规范](coding-standard.md)。已移植驱动保持其接口，新写的 C 代码使用模块前缀、`_t` 类型名和最小头文件依赖。
+机构控制与硬件适配保持两个职责明确的模块。模板驱动使用原有接口，新写 C 代码遵循 [C 语言规范](coding-standard.md)。
 
-## CubeMX 再生成
+上板先保持 `MECH_CONTROL_ENABLE=0`，在 Watch 中添加 `DJmotor`，直接设置模板电机字段并查看 `valNow`。机构任务仅观测反馈，不覆盖参数和控制。完成电机测试后填写机构参数，将开关改为 1，重新编译下载，再使用 `g_mechanism_debug.command` 标零和控制机构。操作字段和顺序见 [控制方案](control-plan.md)。
 
-1. 使用 `SkyClawH7.ioc`，启用 Keep User Code。
-2. 生成文件中的接入代码写在 USER CODE 区：`main.c` 的设备初始化、`freertos.c` 的机构任务与 TIM2 启动、HAL 回调分发。
-3. 检查 Keil 工程名称、输出路径、源文件组和 include path，保留 `APL/mechanism` 与三个机构 `.c` 文件。
-4. 链接器使用 `MDK-ARM/stm32h723zxx_flash.sct`，ARM Compiler 6，Use MicroLIB 关闭。
-5. 保留 UART7 4 Mbps、RX Circular DMA、UART IDLE 中断及 PG1 方向脚配置。
-6. 检查 TIM2 1 kHz、TIM1 HAL 时基，以及 CAN / UART / TIM 的中断优先级。
-7. 保留 MPU 中 AXI SRAM 的可缓存区域和 D2 SRAM 的不可缓存区域；检查 DMA 缓冲段和对齐。
-8. 运行 `python3 Tools/check_project.py`，再用 Keil 编译、链接和上板验证。
+## 重新生成
 
-## 增加模块
+1. 打开 `SkyClawH7.ioc`，启用 Keep User Code；泵 GPIO 配成推挽输出，初始电平关闭。
+2. 保留 `freertos.c` USER CODE 区的 `Mechanism_TaskCreate` 和 TIM2 启动；`tim.c` 的 TIM2_Init 2 区不提前启动定时器。
+3. 保留 IRQ 中的机构周期、DJI 反馈时间记录及 GO 接收适配，同时保留模板原有分发。
+4. 检查 Keil 的 `APL/user_ostasks/myostasks.c`、`APL/user_ostasks` 和 `APL/mechanism` 引用，机构的三个 `.c` 文件须加入工程。
+5. 使用 ARM Compiler 6、`stm32h723zxx_flash.sct`，关闭 MicroLIB。
+6. 保留 UART7 4 Mbps、RX Circular DMA、IDLE 中断和 PG1 方向脚；核对 TIM2 1 kHz、TIM1 HAL 时基、中断优先级。
+7. 保留 AXI SRAM 可缓存、D2 SRAM Normal 不可缓存的 MPU 配置，以及 DMA 段和对齐。
+8. 运行主机测试、工程引用检查与 Keil 编译，再验证实物。
 
-- 源文件和头文件放在所属层并成对命名，加入 Keil 文件组与 include path。
-- 新的电机驱动接入初始化、接收回调和周期调度；发送频率按实际协议确定。
-- 新 UART 的 DMA 缓冲和接收恢复归使用该 UART 的模块；IRQ 层按句柄分发。
-- 新任务在 `MX_FREERTOS_Init` 的 USER CODE 区调用模块的创建函数，长业务放在任务中。
-- 机构调试量加入 `g_mechanism_debug`，由机构任务更新，供 Keil Watch 查看；字段见 [控制方案](control-plan.md)。
-
-## 验证
-
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-python3 Tools/check_project.py
-```
-
-主机测试验证控制数学与状态处理。`check_project.py --arm-gcc arm-none-eabi-gcc` 可做 ARM C 语法检查；RVDS 汇编端口和完整固件链接由 Keil 验证。硬件行为以台架测试结果为准。
+验证命令见根目录 [README](../README.md)。测试覆盖差速方向与比例、三轴同步、组合运动限速、标零、停止/故障恢复、反馈超时和毫秒计数回绕。

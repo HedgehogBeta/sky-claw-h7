@@ -6,7 +6,9 @@
  * structures) is kept in this header so the driver does not depend on a
  * separate protocol header.
  *
- * 反馈使用电机减速器输出轴的绝对编码角度，机械零位由应用层管理。
+ * NOTE: GO-M8010-6 has an absolute encoder. This driver does NOT perform
+ * auto zero on power-up; call UnitreeMotor_SetZero() at the mechanical zero
+ * before enabling position control.
  */
 #ifndef UNITREEMOTOR_H
 #define UNITREEMOTOR_H
@@ -116,11 +118,10 @@ extern "C"
         UnitreeMotorError_t error;         /* 错误码 */
         float torque;      /* 实际关节输出力矩, N.m */
         float speed;       /* 实际关节输出速度, rad/s */
-        float position;    /* 减速器输出轴绝对角度，rad */
+        float position;    /* 实际关节输出位置, rad(已减去零位偏移) */
         int correct;       /* 1=帧完整/CRC 正确 */
         int foot_force;    /* 足端力原始值 */
         uint16_t calc_crc; /* 本机计算的 CRC */
-        uint32_t last_rx_ms; /* 最近一次有效应答的 HAL tick */
         uint32_t timeout;  /* 通讯超时计数 */
         uint32_t bad_msg;  /* CRC/包头错误计数 */
         UnitreeMotorFeedbackFrame_t frame;
@@ -129,10 +130,12 @@ extern "C"
     typedef struct
     {
         volatile bool enable;   /* true=发送 FOC 模式, false=发送空闲模式 */
+        volatile bool set_zero; /* true=下一次 Func 将该电机当前位置设为零点 */
         bool begin;             /* true=参与周期发送 */
 
         UnitreeMotorCmd_t cmd;   /* 用户写目标值 */
         UnitreeMotorData_t data; /* 最新反馈(已修正零位) */
+        float zero_offset;       /* 控制坐标系下的零位偏移 */
     } UnitreeMotor;
 
 #pragma pack()

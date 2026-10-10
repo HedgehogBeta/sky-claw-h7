@@ -20,7 +20,7 @@ LED1～4：PB3 / PB4 / PB5 / PB6，高电平点亮；蜂鸣器：PB0，高电平
 
 | 外设 | TX / RX | 波特率 | 当前用途 |
 | --- | --- | --- | --- |
-| USART1 | PA9 / PA10 | 460800 | IMU 外设保留，任务未启用 |
+| USART1 | PA9 / PA10 | 460800 | 模板 IMU 接口，与阀板 BUS1 复用 |
 | USART2 | PD5 / PD6 | 115200 | 预留，无 RX DMA |
 | USART3 | PD8 / PD9 | 115200 | 预留，有 RX DMA |
 | UART4 | PA0 / PA1 | 115200 | 预留，有 RX DMA |
@@ -32,7 +32,7 @@ UART7 的收发方向控制为 PG1，高电平发送、低电平接收。GO 电�
 
 ## 气泵和阀板
 
-泵 GPIO、有效电平和阀通道在 `APL/mechanism/mechanism_board_config.h`，默认未分配、未启用。GPIO 控制泵的功率驱动模块。
+泵 GPIO、有效电平和阀通道在 `APL/mechanism/mechanism_config.h`，默认未分配。泵 GPIO 在 CubeMX 配成推挽输出并以关闭电平初始化，机构应用检查后控制泵的功率驱动模块。
 
 模板阀板驱动使用两个 GPIO 发送四位通道掩码：
 

@@ -14,6 +14,7 @@
 #include "motor_cfg.h"
 #include "ZDrive.h"
 #include "DJmotor.h"
+#include "mechanism_app.h"
 #include "VescMotor.h"
 #include "fdcan.h" /* hfdcan1/2/3 声明 */
 
@@ -38,6 +39,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 #endif
 #if USE_DJ && (MOTOR_DJI_CAN_BUS == 1U)
             DJmotor_Receive(Rxheader, Rx_data);
+            Mechanism_DjiFeedbackCallback(&Rxheader);
             return;
 #endif
             /* CAN1 预留给用户通信,其余帧在这里直接解析 */
@@ -53,6 +55,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 #endif
 #if USE_DJ && (MOTOR_DJI_CAN_BUS == 2U)
             DJmotor_Receive(Rxheader, Rx_data);
+            Mechanism_DjiFeedbackCallback(&Rxheader);
             return;
 #endif
         }
@@ -67,6 +70,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 #endif
 #if USE_DJ && (MOTOR_DJI_CAN_BUS == 3U)
             DJmotor_Receive(Rxheader, Rx_data);
+            Mechanism_DjiFeedbackCallback(&Rxheader);
             return;
 #endif
         }

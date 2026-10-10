@@ -122,6 +122,8 @@ void UnitreeMotor_Init(void)
         Unitree_motors[i].cmd.id = (uint16_t)i;
         Unitree_motors[i].data.id = (uint8_t)i;
         Unitree_motors[i].enable = false;
+        Unitree_motors[i].set_zero = MOTOR_UNITREE_AUTO_SET_ZERO ? true : false;
+        Unitree_motors[i].zero_offset = 0.0f;
         Unitree_motors[i].begin = true;
     }
 
@@ -163,7 +165,7 @@ void UnitreeMotor_EncodeFrame(UnitreeMotorCmd_t *cmd)
     UNITREE_SATURATE(cmd->position, -411774.0f, 411774.0f);
 
     /* 协议实测为转子侧量:上层关节语义需在此做减速比换算 */
-    tor_des = (int16_t)(cmd->torque / UNITREE_GEAR_RATIO * 256.0f);
+    tor_des = (int16_t)(cmd->torque * UNITREE_GEAR_RATIO * 256.0f);
     spd_des = (int16_t)((cmd->speed * UNITREE_GEAR_RATIO) / UNITREE_2PI * 256.0f);
     pos_des = (int32_t)((cmd->position * UNITREE_GEAR_RATIO) / UNITREE_2PI * 32768.0f);
     kp = (int16_t)(cmd->kp / 25.6f * 32768.0f);
@@ -316,7 +318,8 @@ void UnitreeMotor_UART_RxEvent(UART_HandleTypeDef *huart)
             uint32_t bad_msg = Unitree_motors[rx_data->id].data.bad_msg;
             Unitree_motors[rx_data->id].data = *rx_data;
             Unitree_motors[rx_data->id].data.bad_msg = bad_msg;
-            Unitree_motors[rx_data->id].data.last_rx_ms = HAL_GetTick();
+            Unitree_motors[rx_data->id].data.position -=
+                Unitree_motors[rx_data->id].zero_offset;
         }
     }
     s_unitree_rx_read_idx = pos;
@@ -355,6 +358,7 @@ static void UnitreeMotor_SendCommand(UnitreeMotor *motor)
     Unitree_SetTxMode(); /* RS485 方向:发送 */
 
     s_unitree_tx_cmd = motor->cmd;
+    s_unitree_tx_cmd.position += motor->zero_offset; /* 用户目标 + 零位偏移 */
     UnitreeMotor_EncodeFrame(&s_unitree_tx_cmd);
 
     /* CPU 填好帧,DMA 读之前必须先 Clean,把新数据刷回内存
@@ -363,6 +367,52 @@ static void UnitreeMotor_SendCommand(UnitreeMotor *motor)
                             sizeof(s_unitree_tx_cmd.frame));
     HAL_UART_Transmit_DMA(uart, (uint8_t *)&s_unitree_tx_cmd.frame,
                           sizeof(s_unitree_tx_cmd.frame));
+}
+
+static void UnitreeMotor_SetZero(int motor_id)
+{
+    if (motor_id < 0 || motor_id >= UNITREE_MOTOR_NUM)
+    {
+        for (uint32_t i = 0U; i < UNITREE_MOTOR_NUM; i++)
+        {
+            Unitree_motors[i].zero_offset += Unitree_motors[i].data.position;
+            Unitree_motors[i].cmd.position = 0.0f;
+            Unitree_motors[i].data.position = 0.0f;
+        }
+        return;
+    }
+
+    Unitree_motors[motor_id].zero_offset += Unitree_motors[motor_id].data.position;
+    Unitree_motors[motor_id].cmd.position = 0.0f;
+    Unitree_motors[motor_id].data.position = 0.0f;
+}
+
+static void UnitreeMotor_Enable(int motor_id)
+{
+    if (motor_id < 0 || motor_id >= UNITREE_MOTOR_NUM)
+    {
+        for (uint32_t i = 0U; i < UNITREE_MOTOR_NUM; i++)
+        {
+            Unitree_motors[i].enable = true;
+        }
+        return;
+    }
+
+    Unitree_motors[motor_id].enable = true;
+}
+
+static void UnitreeMotor_Disable(int motor_id)
+{
+    if (motor_id < 0 || motor_id >= UNITREE_MOTOR_NUM)
+    {
+        for (uint32_t i = 0U; i < UNITREE_MOTOR_NUM; i++)
+        {
+            Unitree_motors[i].enable = false;
+        }
+        return;
+    }
+
+    Unitree_motors[motor_id].enable = false;
 }
 
 void UnitreeMotor_Func(void)
@@ -385,6 +435,11 @@ void UnitreeMotor_Func(void)
             motor->cmd.mode = UNITREE_MOTOR_MODE_IDLE;
         }
 
+        if (motor->set_zero && motor->data.correct)
+        {
+            UnitreeMotor_SetZero((int)i);
+            motor->set_zero = false;
+        }
     }
 
     UnitreeMotor_SendCommand(&Unitree_motors[s_unitree_tx_index]);

@@ -21,6 +21,7 @@
 #include "imu.h"        /* Imu_UartRxEvent / RxError */
 #include "UnitreeMotor.h" /* UnitreeMotor_UART_*Callback */
 #include "motor_cfg.h" /* USE_UNITREE */
+#include "mechanism_app.h"
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
@@ -35,7 +36,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     else if (huart->Instance == huart7.Instance) /* Unitree:环形 DMA 双缓冲 + IDLE 收应答 */
     {
 #if USE_UNITREE
-        UnitreeMotor_UART_RxEvent(huart);
+        Mechanism_GoReceive(huart);
 #endif
     }
     /* 新串口(用 DMA+IDLE 接收)在这里加分支 */
