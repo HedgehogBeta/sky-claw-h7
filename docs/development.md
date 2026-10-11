@@ -5,7 +5,7 @@
 | 内容 | 位置 |
 | --- | --- |
 | 差速关系、行程、运动时间和速度上限 | `APL/mechanism/mechanism_config.c` |
-| 机构控制开关、闭环增益、电流上限、气路接线 | `APL/mechanism/mechanism_config.h` |
+| 机构控制开关、闭环增益、前馈、死区、电流上限、气路接线 | `APL/mechanism/mechanism_config.h` |
 | 标零、轨迹、状态与故障 | `APL/mechanism/mechanism.c` |
 | Watch 命令、反馈与硬件输出 | `APL/mechanism/mechanism_app.c` |
 | 电机开关、数量、内部减速比与总线 | `FML/motor/motor_cfg.h` |
@@ -13,7 +13,7 @@
 
 机构控制与硬件适配保持两个职责明确的模块。模板驱动使用原有接口，新写 C 代码遵循 [C 语言规范](coding-standard.md)。
 
-上板先保持 `MECH_CONTROL_ENABLE=0`，在 Watch 中添加 `DJmotor`，直接设置模板电机字段并查看 `valNow`。机构任务仅观测反馈，不覆盖参数和控制。完成电机测试后填写机构参数，将开关改为 1，重新编译下载，再使用 `g_mechanism_debug.command` 标零和控制机构。操作字段和顺序见 [控制方案](control-plan.md)。
+当前腕部参数已完成实机调试，日常操作使用 `g_mechanism_debug.command` 标零和控制机构。需要绕过机构层直接调试电机时，再将 `MECH_CONTROL_ENABLE` 改为 0 并重新编译下载。操作步骤见 [控制方案](control-plan.md)，当前配置见 [参数配置](parameters.md)。
 
 ## 重新生成
 

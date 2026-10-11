@@ -41,10 +41,17 @@ static Mechanism_Feedback_t Test_Feedback(uint32_t now_ms)
     return feedback;
 }
 
+static void Test_DjiSpeedZero(const Mechanism_t *p_mechanism)
+{
+    assert(p_mechanism->output.dji_speed_rpm[0] == 0.0f);
+    assert(p_mechanism->output.dji_speed_rpm[1] == 0.0f);
+}
+
 static void Test_Start(Mechanism_t *p_mechanism, const Mechanism_Config_t *p_config,
                         const Mechanism_Feedback_t *p_feedback, uint32_t now_ms)
 {
     Mechanism_Init(p_mechanism, p_config, now_ms);
+    Test_DjiSpeedZero(p_mechanism);
     assert(p_mechanism->state == MECH_STATE_UNCALIBRATED);
     assert(!p_mechanism->output.motors_enabled);
     assert(Mechanism_Enable(p_mechanism, p_feedback, now_ms) == MECH_NO_ZERO);
@@ -52,6 +59,7 @@ static void Test_Start(Mechanism_t *p_mechanism, const Mechanism_Config_t *p_con
     assert(p_mechanism->state == MECH_STATE_READY);
     assert(Mechanism_Enable(p_mechanism, p_feedback, now_ms) == MECH_OK);
     assert(p_mechanism->state == MECH_STATE_HOLDING);
+    Test_DjiSpeedZero(p_mechanism);
 }
 
 static void Test_Near(float actual, float expected)
@@ -156,13 +164,17 @@ static void Test_WristOnlyMotion(void)
                   mechanism.setpoint.roll_deg / target.roll_deg);
         assert(fabsf(mechanism.output.shaft_target_deg[MECH_LEFT] - previous_left) / 0.005f <= 60.1f);
         assert(fabsf(mechanism.output.shaft_target_deg[MECH_RIGHT] - previous_right) / 0.005f <= 60.1f);
+        assert(fabsf(mechanism.output.dji_speed_rpm[0]) <= 10.001f);
+        assert(fabsf(mechanism.output.dji_speed_rpm[1]) <= 10.001f);
     }
     assert(mechanism.state == MECH_STATE_HOLDING);
+    Test_DjiSpeedZero(&mechanism);
     Test_Near(mechanism.output.shaft_target_deg[MECH_LEFT], 60.0f);
     Test_Near(mechanism.output.shaft_target_deg[MECH_RIGHT], 40.0f);
     Mechanism_Stop(&mechanism);
     assert(!mechanism.output.motors_enabled);
     assert(Mechanism_Enable(&mechanism, &feedback, 4000U) == MECH_OK);
+    Test_DjiSpeedZero(&mechanism);
     Test_Near(mechanism.measured.pitch_deg, target.pitch_deg);
     Test_Near(mechanism.measured.roll_deg, target.roll_deg);
 }
@@ -397,6 +409,95 @@ static void Test_DisabledAirAndTickWrap(void)
     assert(Mechanism_SetTarget(&mechanism, &invalid, start_ms + 300U) == MECH_BAD_TARGET);
 }
 
+static void Test_WristSpeedFeedforward(void)
+{
+    /* Known shaft displacements for pitch ratio 3 and roll ratio -4. */
+    const Mechanism_Pose_t targets[] = {
+        {0.0f, 20.0f, -10.0f}, {0.0f, -20.0f, 10.0f},
+        {0.0f, 20.0f, 0.0f}, {0.0f, 0.0f, 10.0f}};
+    const float left_deg[] = {100.0f, -100.0f, 60.0f, -40.0f};
+    const float normalized_right_deg[] = {20.0f, -20.0f, 60.0f, 40.0f};
+
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        for (unsigned scenario = 0U; scenario < sizeof(targets) / sizeof(targets[0]); ++scenario)
+        {
+            Mechanism_Config_t config = Test_WristConfig();
+            config.right_motor_direction = direction;
+            Mechanism_t mechanism;
+            Mechanism_Feedback_t feedback = Test_Feedback(0U);
+            Test_WristFeedback(&feedback, 0U);
+            Test_Start(&mechanism, &config, &feedback, 0U);
+            assert(Mechanism_SetTarget(&mechanism, &targets[scenario], 0U) == MECH_OK);
+            Test_DjiSpeedZero(&mechanism);
+            const uint32_t end_ms = (uint32_t)ceilf(mechanism.duration_s * 1000.0f) + 5U;
+            float peak_rpm = 0.0f;
+            for (uint32_t now_ms = 5U; now_ms <= end_ms; now_ms += 5U)
+            {
+                Test_WristFeedback(&feedback, now_ms);
+                Mechanism_Tick(&mechanism, &feedback, now_ms);
+                if (mechanism.state == MECH_STATE_MOVING)
+                {
+                    float t = mechanism.elapsed_s / mechanism.duration_s;
+                    float derivative = 30.0f * t * t * (1.0f - t) * (1.0f - t) /
+                                       mechanism.duration_s;
+                    Test_Near(mechanism.output.dji_speed_rpm[0],
+                              left_deg[scenario] * derivative / 6.0f);
+                    Test_Near(mechanism.output.dji_speed_rpm[1],
+                              (float)direction * normalized_right_deg[scenario] * derivative / 6.0f);
+                }
+                else
+                {
+                    Test_DjiSpeedZero(&mechanism);
+                }
+                for (unsigned motor = 0U; motor < 2U; ++motor)
+                {
+                    float speed = fabsf(mechanism.output.dji_speed_rpm[motor]);
+                    assert(speed <= (float)config.wrist_speed_limit_rpm + 0.001f);
+                    peak_rpm = fmaxf(peak_rpm, speed);
+                }
+            }
+            assert(peak_rpm > 9.99f);
+            assert(mechanism.state == MECH_STATE_HOLDING);
+            Test_DjiSpeedZero(&mechanism);
+        }
+    }
+}
+
+static void Test_WristSpeedClearsOnStopAndFault(void)
+{
+    Mechanism_Config_t config = Test_WristConfig();
+    Mechanism_t mechanism;
+    Mechanism_Feedback_t feedback = Test_Feedback(0U);
+    const Mechanism_Pose_t target = {0.0f, 20.0f, -10.0f};
+    Test_WristFeedback(&feedback, 0U);
+    Test_Start(&mechanism, &config, &feedback, 0U);
+    assert(Mechanism_SetTarget(&mechanism, &target, 0U) == MECH_OK);
+    Test_WristFeedback(&feedback, 100U);
+    Mechanism_Tick(&mechanism, &feedback, 100U);
+    assert(mechanism.output.dji_speed_rpm[0] > 0.0f);
+    assert(mechanism.output.dji_speed_rpm[1] < 0.0f);
+    Mechanism_Stop(&mechanism);
+    Test_DjiSpeedZero(&mechanism);
+    assert(Mechanism_Enable(&mechanism, &feedback, 100U) == MECH_OK);
+    Test_DjiSpeedZero(&mechanism);
+
+    assert(Mechanism_SetTarget(&mechanism, &target, 100U) == MECH_OK);
+    Test_WristFeedback(&feedback, 200U);
+    Mechanism_Tick(&mechanism, &feedback, 200U);
+    assert(mechanism.output.dji_speed_rpm[0] > 0.0f);
+    Mechanism_Tick(&mechanism, &feedback, 301U);
+    assert(mechanism.state == MECH_STATE_FAULT);
+    assert(mechanism.fault == MECH_FEEDBACK_LOST);
+    Test_DjiSpeedZero(&mechanism);
+    Mechanism_Stop(&mechanism);
+    Test_DjiSpeedZero(&mechanism);
+    Test_WristFeedback(&feedback, 305U);
+    assert(Mechanism_CaptureZero(&mechanism, &feedback, 305U) == MECH_OK);
+    assert(Mechanism_Enable(&mechanism, &feedback, 305U) == MECH_OK);
+    Test_DjiSpeedZero(&mechanism);
+}
+
 int main(void)
 {
     Test_Configuration();
@@ -406,6 +507,8 @@ int main(void)
     Test_SynchronizedMotion();
     Test_StopAndFaultRecovery();
     Test_DisabledAirAndTickWrap();
+    Test_WristSpeedFeedforward();
+    Test_WristSpeedClearsOnStopAndFault();
     puts("mechanism tests passed");
     return 0;
 }

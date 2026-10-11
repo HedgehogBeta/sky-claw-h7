@@ -1,51 +1,43 @@
 # 参数配置
 
-当前 `mechanism_config.h` 中 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=0`，机构任务控制两台 M2006 腕部，GO 保持失能。腕部参数有效即可标零和使能；气路配置独立，`air_ready=false` 不妨碍运动。恢复整机控制时，将 `MECH_GO_CONTROL_ENABLE` 改为 1、填好 GO 参数并重新编译下载。
+以下记录本次腕部实机调试后的配置。最新数值以 [mechanism_config.h](../APL/mechanism/mechanism_config.h) 和 [mechanism_config.c](../APL/mechanism/mechanism_config.c) 为准；更换负载、传动或启用 GO 后需重新验证。
 
-直接 Watch 调试 `DJmotor` 和 `Unitree_motors` 时，将 `MECH_CONTROL_ENABLE` 改为 0 并重新编译下载。此时机构宏不接管模板电机的参数、PID、使能、目标或气路，机构命令返回 `MECH_BAD_STATE`。
+## 当前腕部参数
 
-## 必须按实物填写
+当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=0`，机构任务控制两台 M2006，GO 保持失能。
 
-| 参数 | 位置 | 用途 |
+| 参数 | 当前值 | 含义 |
 | --- | --- | --- |
-| `arm_motor_ratio` | `mechanism_config.c` | GO 输出轴到机械臂的外部传动比与方向，仅启用 GO 时要求有效 |
-| `pitch_motor_ratio/roll_motor_ratio` | 同上 | 双圆锥齿轮的俯仰与旋转比例、左电机方向 |
-| `right_motor_direction` | 同上 | 右电机轴向约定，+1 或 -1 |
-| `arm_range/pitch_range/roll_range` | 同上 | 受控轴实际行程，包含约定零位；旋转范围考虑气管和线束，机械臂范围仅启用 GO 时要求有效 |
-| `MECH_DJI_POSITION_KP`、`MECH_DJI_SPEED_KP/KI` | `mechanism_config.h` | 两台相同 M2006 的位置 P、速度 PI 增益 |
-| `MECH_GO_KP/KD` | 同上 | GO 的位置刚度与阻尼协议增益，仅启用 GO 时要求有效 |
-| `MECH_PUMP_GPIO_PORT/PIN/ACTIVE_LEVEL` | 同上 | 泵驱动的输出引脚与开启电平；CubeMX 配成推挽输出 |
-| `MECH_VALVE_BUS`、`OPEN/CLOSE/OFF_MASK` | 同上 | 阀板接口、张开/夹紧/失能通道；低四位对应四路 |
-
-机械零位统一为受控轴 0°，通过失能时的标零命令记录，不填写电机零位偏移。腕部模式只捕获两台 M2006 零位，`arm_deg` 目标必须为 0；`measured.arm_deg=0` 表示未控制机械臂，不是实际角度。外部传动比不包含驱动已处理的电机内部减速比。
-
-传动比、行程、方向和增益必须按实物填写，并以配置文件中的当前值为准。GO 未启用时，其传动比、行程和增益可暂留 0，GO 速度参数也不参与验证或轨迹约束；两台 M2006 的参数仍须有效。右电机方向只能为 +1 或 -1，需结合两侧轴向验证。泵引脚与阀通道尚未分配，填写有效气路参数且泵 GPIO 已正确初始化后，机构气路才可用；此前不可发送气路命令 5。
-
-## 可按调试结果调整
-
-| 参数 | 当前值 | 用途 |
-| --- | --- | --- |
-| `move_time_s` | 2 s | 三轴每次运动的最短时间，控制起停平缓程度 |
-| `go_speed_limit_deg_s` | 30 deg/s | GO 减速器输出轴的轨迹速度上限，仅启用 GO 时使用 |
-| `wrist_speed_limit_rpm` | 60 rpm | 两台 M2006 输出轴的轨迹与位置环速度上限 |
 | `MECH_DJI_CURRENT_LIMIT_RAW` | 3000，约 3 A | C610 电流限幅 |
+| `MECH_DJI_POSITION_KP` | 0.15 | 位置 P；误差按编码器计数计算，输出转子 rpm |
+| `MECH_DJI_SPEED_KP / MECH_DJI_SPEED_KI` | 2.0 / 0.02 | 速度 PI；目标与反馈使用转子 rpm |
+| `MECH_DJI_SPEED_FEEDFORWARD` | 1.0 | 轨迹速度前馈倍率，0 可关闭 |
+| `MECH_DJI_HOLD_DEADBAND_ENTER_DEG` | 0.3° | 保持死区进入误差，0 可关闭 |
+| `MECH_DJI_HOLD_DEADBAND_EXIT_DEG` | 0.6° | 保持死区退出误差，启用时须大于进入值 |
+| `move_time_s` | 1 s | 所有动作的最短时长 |
+| `wrist_speed_limit_rpm` | 100 rpm | M2006 输出轴轨迹与合成速度给定上限 |
+| `pitch_motor_ratio / roll_motor_ratio` | -1 / 2 | 俯仰、旋转到左电机输出轴的比例，带方向 |
+| `right_motor_direction` | -1 | 右电机轴向约定 |
+| `pitch_range` | -10°～190° | 俯仰允许范围 |
+| `roll_range` | -360°～360° | 旋转允许范围 |
 
-速度约束按受控电机实际合成位移计算，超限时增加运动时间。两台 M2006 保持同步五次轨迹与 100 ms 反馈超时、越界保护。带载调试先降低速度和电流，逐步确定满足动作要求的值。
+位置环 KI/KD、速度环 KD 均为 0。传动比不包含电机内部减速比；死区角度指 M2006 减速器输出轴误差，不代表夹爪端角度精度。工作原理与操作见 [控制方案](control-plan.md)。
 
-## 未到位或抖动时
+## 总线与周期
 
-驱动已保留减速后的浮点速度反馈，并以浮点累加速度 PI 电流增量，发送 CAN 时才转换为整数；累加电流本身限幅，失能、切模式时清零。原来的整数截断会丢失低速反馈和小电流增量，这些修复仍需在实物上验证效果。
+| 项目 | 配置 |
+| --- | --- |
+| M2006 | FDCAN3，CAN ID 1/2，内部减速比 36 |
+| GO-M8010-6 | UART7，ID 0，4 Mbps，内部减速比 6.33；当前失能 |
+| 电机闭环 / 机构任务 | 1 ms / 5 ms |
+| 受控电机反馈超时 | 100 ms |
 
-先用新版固件测试小角度目标，比较 `g_mechanism_debug.measured` 与 `target`，同时观察左右 `current_a`、`speed_rpm`。`state=2` 只表示轨迹结束并保持目标，不表示实际到位。
+总线与电机数量见 `FML/motor/motor_cfg.h`，波形通道与串口接线见 [VOFA 调试](vofa_plus.md)。
 
-- 持续同方向接近 3 A、速度很低且误差不减小：先停止，检查齿轮啮合、轴承、干涉和负载，不能只靠提高增益。
-- 电流反复换向、位置来回摆动：先试将速度环 `MECH_DJI_SPEED_KI` 从 0.05 降到 0.01；仍摆动再单独试将位置环 `MECH_DJI_POSITION_KP` 从 0.07 降到 0.04。每次只改一个参数、重新编译测试；降低积分可能让静摩擦造成的偏差恢复更慢。
-- 主要在运动起停时抖动：可单独试将 `move_time_s` 从 2 s 延长至 4 s。小误差附近的齿隙往复可考虑到位容差和滞回，但容差需实测确定，不能用它掩盖明显未到位。
+## 后续配置
 
-上述增益、时间建议尚未写入当前配置。先验证反馈精度修复和 3 A 限幅，再按现象逐项调整。
+- 启用 GO：填写 GO 传动比、行程和增益，将 `MECH_GO_CONTROL_ENABLE` 改为 1，再编译下载。
+- 气路：配置泵 GPIO 和阀通道；当前 `air_ready=false`，腕部运动可用，气路命令不可用。
+- 参数变更：每次只改一项，比较同一动作的角度、速度和电流波形。缩短时长会增加加速度需求；持续电流饱和时先处理负载或运动要求。重力前馈尚未实现。
 
-## 已确定的工程设置
-
-机构任务周期 5 ms，反馈超时 100 ms。M2006 使用 FDCAN3、CAN ID 1/2、内部减速比 36；GO-M8010-6 使用 UART7、ID 0、4 Mbps、内部减速比 6.33。电机总线编号遵循模板：1=FDCAN1、2=FDCAN2、3=FDCAN3。
-
-接线完成后核对供电与 ID；这些设置在 `FML/motor/motor_cfg.h`。机构输入是三轴角度，按方块高度实测所需姿态后下发目标。
+机构配置修改后需重新编译下载。直接电机 Watch 调试使用模板参数，须单独确认 PID 和电流上限，步骤见 [控制方案](control-plan.md#直接电机调试)。

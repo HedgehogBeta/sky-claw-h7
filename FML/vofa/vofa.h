@@ -11,7 +11,7 @@ extern "C"
 #include "usart.h"
 
 /* 通道槽位数:合法通道号 0 ~ VOFA_MAX_CH-1 */
-#define VOFA_MAX_CH 8
+#define VOFA_MAX_CH 12
 
 /* 发送任务配置(模块内部创建,不依赖 CubeMX 任务) */
 #define VOFA_TASK_STACK_WORDS 128U

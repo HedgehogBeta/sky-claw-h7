@@ -87,7 +87,8 @@ typedef struct
 {
     bool motors_enabled;
     float shaft_target_deg[MECH_MOTOR_COUNT];
-    float go_speed_deg_s; /* GO 速度前馈；M2006 使用模板的位置闭环 */
+    float go_speed_deg_s;   /* GO 输出轴速度前馈 */
+    float dji_speed_rpm[2]; /* 左、右 M2006 输出轴速度前馈 */
     bool pump_on;
     Mechanism_Claw_t claw;
 } Mechanism_Output_t;

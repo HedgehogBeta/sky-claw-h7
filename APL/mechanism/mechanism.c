@@ -204,6 +204,8 @@ Mechanism_Result_t Mechanism_Enable(Mechanism_t *p_mechanism,
             p_mechanism->output.shaft_target_deg[i] = p_feedback->shaft_deg[i];
         }
         p_mechanism->output.go_speed_deg_s = 0.0f;
+        p_mechanism->output.dji_speed_rpm[0] = 0.0f;
+        p_mechanism->output.dji_speed_rpm[1] = 0.0f;
         p_mechanism->last_tick_ms = now_ms;
         Mechanism_EnterState(p_mechanism, MECH_STATE_HOLDING);
     }
@@ -259,6 +261,9 @@ Mechanism_Result_t Mechanism_SetTarget(Mechanism_t *p_mechanism, const Mechanism
     p_mechanism->target = *p_pose;
     p_mechanism->elapsed_s = 0.0f;
     p_mechanism->duration_s = duration_s;
+    p_mechanism->output.go_speed_deg_s = 0.0f;
+    p_mechanism->output.dji_speed_rpm[0] = 0.0f;
+    p_mechanism->output.dji_speed_rpm[1] = 0.0f;
     p_mechanism->last_tick_ms = now_ms;
     if (delta.arm_deg != 0.0f || delta.pitch_deg != 0.0f || delta.roll_deg != 0.0f)
     {
@@ -298,6 +303,8 @@ static void Mechanism_UpdateTrajectory(Mechanism_t *p_mechanism, float elapsed_s
     {
         p_mechanism->setpoint = p_mechanism->target;
         p_mechanism->output.go_speed_deg_s = 0.0f;
+        p_mechanism->output.dji_speed_rpm[0] = 0.0f;
+        p_mechanism->output.dji_speed_rpm[1] = 0.0f;
         Mechanism_EnterState(p_mechanism, MECH_STATE_HOLDING);
         return;
     }
@@ -310,9 +317,16 @@ static void Mechanism_UpdateTrajectory(Mechanism_t *p_mechanism, float elapsed_s
         (p_mechanism->target.pitch_deg - p_mechanism->start.pitch_deg) * position_scale;
     p_mechanism->setpoint.roll_deg = p_mechanism->start.roll_deg +
         (p_mechanism->target.roll_deg - p_mechanism->start.roll_deg) * position_scale;
-    p_mechanism->output.go_speed_deg_s = p_mechanism->config.arm_enabled ?
-        p_mechanism->config.arm_motor_ratio *
-        (p_mechanism->target.arm_deg - p_mechanism->start.arm_deg) * speed_scale : 0.0f;
+    /* 导数与位置使用同一差速映射；前馈使电机无需等待位置误差才开始跟随。 */
+    Mechanism_Pose_t velocity = {
+        (p_mechanism->target.arm_deg - p_mechanism->start.arm_deg) * speed_scale,
+        (p_mechanism->target.pitch_deg - p_mechanism->start.pitch_deg) * speed_scale,
+        (p_mechanism->target.roll_deg - p_mechanism->start.roll_deg) * speed_scale};
+    float shaft_speed_deg_s[MECH_MOTOR_COUNT];
+    Mechanism_ToMotorAngles(&p_mechanism->config, &velocity, shaft_speed_deg_s);
+    p_mechanism->output.go_speed_deg_s = shaft_speed_deg_s[MECH_GO];
+    p_mechanism->output.dji_speed_rpm[0] = shaft_speed_deg_s[MECH_LEFT] / MECH_DEG_S_PER_RPM;
+    p_mechanism->output.dji_speed_rpm[1] = shaft_speed_deg_s[MECH_RIGHT] / MECH_DEG_S_PER_RPM;
 }
 
 void Mechanism_Tick(Mechanism_t *p_mechanism, const Mechanism_Feedback_t *p_feedback,

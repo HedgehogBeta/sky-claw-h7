@@ -16,11 +16,11 @@ const Mechanism_Config_t g_mechanism_config = {
 
     /* 关节允许范围（deg），必须包含约定的 0° 机械零位。 */
     .arm_range = {0.0f, 0.0f},
-    .pitch_range = {-90.0f, 180.0f},
-    .roll_range = {-180.0f, 180.0f},
+    .pitch_range = {-10.0f, 190.0f},
+    .roll_range = {-360.0f, 360.0f},
 
     /* 先用慢速调试；组合运动超过电机速度上限时自动延长运动时间。 */
-    .move_time_s = 2.0f,
+    .move_time_s = 1.0f,
     .go_speed_limit_deg_s = 30.0f,
-    .wrist_speed_limit_rpm = 60
+    .wrist_speed_limit_rpm = 100
 };

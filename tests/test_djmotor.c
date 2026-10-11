@@ -89,14 +89,14 @@ static void Test_PositionBrakesLowSpeed(void)
                  0.0f, PIDINC);
 
         /* Fractional PI increments must survive successive control cycles. */
-        for (unsigned cycle = 0U; cycle < 40U; ++cycle)
+        for (unsigned cycle = 0U; cycle < 200U; ++cycle)
         {
             DJmotor_Func();
             Test_Near(DJmotor[0].velPID.CurVal, (float)rotor_rpm[i]);
             Test_Near(DJmotor[0].velPID.SetVal, 0.0f);
         }
         assert(DJmotor[0].valSet.current_raw * rotor_rpm[i] < 0);
-        assert(tx_count == 40U);
+        assert(tx_count == 200U);
     }
 }
 
@@ -211,6 +211,143 @@ static void Test_DirectCurrentLimit(void)
     assert(Test_TxCurrent(3U) == 0);
 }
 
+static DJMotor *Test_PositionSetup(void)
+{
+    Test_Reset();
+    DJMotor *motor = &DJmotor[0];
+    assert(motor->param.PositionSpeedFeedforward == 0.0f);
+    assert(!motor->limit.PosDeadbandFlag);
+    assert(!motor->argum.pos_deadband_active);
+    motor->Begin = true;
+    motor->MODE_Cur = DJ_Position;
+    motor->MODE_Set = DJ_Position;
+    motor->param.CurrentLimit_raw = MECH_DJI_CURRENT_LIMIT_RAW;
+    PID_Init(&motor->posPID, MECH_DJI_POSITION_KP, 0.0f, 0.0f, PIDPOS);
+    PID_Init(&motor->velPID, MECH_DJI_SPEED_KP, MECH_DJI_SPEED_KI, 0.0f, PIDINC);
+    return motor;
+}
+
+static void Test_PositionSpeedFeedforward(void)
+{
+    const float directions[] = {-1.0f, 1.0f};
+    for (unsigned i = 0U; i < sizeof(directions) / sizeof(directions[0]); ++i)
+    {
+        DJMotor *motor = Test_PositionSetup();
+        motor->valSet.speed_rpm = directions[i] * 2.5f;
+        DJmotor_Func();
+        Test_Near(motor->velPID.SetVal, 0.0f); /* Template opt-in defaults off. */
+
+        motor->param.PositionSpeedFeedforward = 1.0f;
+        DJmotor_Func();
+        Test_Near(motor->velPID.SetVal, directions[i] * 90.0f);
+        Test_Near(motor->posPID.err[0], 0.0f);
+
+        motor->valSet.angle_deg = directions[i];
+        DJmotor_Func();
+        float expected = motor->posPID.KP * (float)motor->valSet.PulseTotal +
+                         directions[i] * 90.0f;
+        assert(fabsf(motor->velPID.SetVal - expected) < 0.0001f);
+
+        /* Each component is below the cap; their sum must be capped afterward. */
+        motor->valSet.speed_rpm = directions[i] * 0.5f;
+        motor->limit.PosRPMLimit = 2;
+        DJmotor_Func();
+        assert(fabsf(motor->posPID.output) < 72.0f);
+        assert(fabsf(motor->posPID.output) + 18.0f > 72.0f);
+        Test_Near(motor->velPID.SetVal, directions[i] * 72.0f);
+    }
+}
+
+static void Test_PositionDeadbandHysteresis(void)
+{
+    const float directions[] = {-1.0f, 1.0f};
+    for (unsigned i = 0U; i < sizeof(directions) / sizeof(directions[0]); ++i)
+    {
+        DJMotor *motor = Test_PositionSetup();
+        motor->limit.PosDeadbandFlag = true;
+        motor->limit.PosDeadbandEnter_deg = 0.3f;
+        motor->limit.PosDeadbandExit_deg = 0.6f;
+        motor->argum.current_accum_raw = directions[i] * 1234.5f;
+        motor->valSet.current_raw = (int16_t)motor->argum.current_accum_raw;
+
+        /* Enter at the inclusive boundary, retaining the load-bearing current. */
+        motor->valSet.angle_deg = directions[i] * 0.3f;
+        DJmotor_Func();
+        assert(motor->argum.pos_deadband_active);
+        Test_Near(motor->posPID.err[0], 0.0f);
+        Test_Near(motor->velPID.SetVal, 0.0f);
+        Test_Near(motor->argum.current_accum_raw, directions[i] * 1234.5f);
+        assert(Test_TxCurrent(0U) == (int16_t)(directions[i] * 1234.5f));
+
+        motor->valSet.angle_deg = directions[i] * 0.45f;
+        DJmotor_Func();
+        assert(motor->argum.pos_deadband_active);
+        Test_Near(motor->velPID.SetVal, 0.0f);
+
+        /* Deadband suppresses position error while velocity feedback brakes. */
+        motor->valNow.speed_rpm = directions[i] / 36.0f;
+        for (unsigned cycle = 0U; cycle < 20U; ++cycle)
+        {
+            DJmotor_Func();
+            assert(motor->argum.pos_deadband_active);
+            Test_Near(motor->velPID.CurVal, directions[i]);
+            Test_Near(motor->velPID.SetVal, 0.0f);
+        }
+        assert(motor->argum.current_accum_raw * directions[i] < 1234.5f);
+        assert(motor->argum.current_accum_raw * directions[i] > 1200.0f);
+
+        /* Exit at the inclusive boundary and restore position correction. */
+        motor->valSet.angle_deg = directions[i] * 0.6f;
+        DJmotor_Func();
+        assert(!motor->argum.pos_deadband_active);
+        assert(motor->posPID.err[0] * directions[i] > 0.0f);
+        assert(motor->velPID.SetVal * directions[i] > 0.0f);
+        motor->valSet.angle_deg = directions[i] * 0.45f;
+        DJmotor_Func();
+        assert(!motor->argum.pos_deadband_active);
+        assert(motor->velPID.SetVal * directions[i] > 0.0f);
+    }
+}
+
+static void Test_PositionDeadbandGatingAndReset(void)
+{
+    DJMotor *motor = Test_PositionSetup();
+    motor->limit.PosDeadbandEnter_deg = 0.3f;
+    motor->limit.PosDeadbandExit_deg = 0.6f;
+    motor->valSet.angle_deg = 0.2f;
+    DJmotor_Func();
+    assert(!motor->argum.pos_deadband_active); /* Moving with flag off. */
+    assert(motor->velPID.SetVal > 0.0f);
+
+    motor->limit.PosDeadbandFlag = true;
+    DJmotor_Func();
+    assert(motor->argum.pos_deadband_active);
+    motor->limit.PosDeadbandFlag = false;
+    DJmotor_Func();
+    assert(!motor->argum.pos_deadband_active);
+    assert(motor->velPID.SetVal > 0.0f);
+
+    motor->limit.PosDeadbandFlag = true;
+    motor->limit.PosDeadbandEnter_deg = 0.0f;
+    DJmotor_Func();
+    assert(!motor->argum.pos_deadband_active);
+    assert(motor->velPID.SetVal > 0.0f);
+
+    motor->limit.PosDeadbandEnter_deg = 0.3f;
+    DJmotor_Func();
+    assert(motor->argum.pos_deadband_active);
+    motor->MODE_Set = DJ_RPM;
+    DJmotor_Func();
+    assert(!motor->argum.pos_deadband_active);
+    motor->MODE_Set = DJ_Position;
+    DJmotor_Func();
+    assert(motor->argum.pos_deadband_active);
+    motor->Begin = false;
+    DJmotor_Func();
+    assert(!motor->argum.pos_deadband_active);
+    assert(Test_TxCurrent(0U) == 0);
+}
+
 int main(void)
 {
     Test_LowSpeedFeedback();
@@ -218,6 +355,9 @@ int main(void)
     Test_PositionCurrentLimitAndFrame();
     Test_DisableAndModeSwitchClearCurrent();
     Test_DirectCurrentLimit();
+    Test_PositionSpeedFeedforward();
+    Test_PositionDeadbandHysteresis();
+    Test_PositionDeadbandGatingAndReset();
     puts("DJI feedback precision, low-speed braking and 3 A CAN limits passed");
     return 0;
 }

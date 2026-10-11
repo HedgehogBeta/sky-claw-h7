@@ -35,6 +35,13 @@ VOFA_ADD_FLOAT(2, g_mechanism_debug.measured.roll_deg);
 VOFA_ADD_FLOAT(3, g_mechanism_debug.setpoint.arm_deg);
 VOFA_ADD_FLOAT(4, g_mechanism_debug.setpoint.pitch_deg);
 VOFA_ADD_FLOAT(5, g_mechanism_debug.setpoint.roll_deg);
+/* 调速度环时比较同单位的转子 rpm，并检查实际电流是否持续饱和。 */
+VOFA_ADD_FLOAT(6, DJmotor[0].velPID.SetVal);
+VOFA_ADD_FLOAT(7, DJmotor[0].velPID.CurVal);
+VOFA_ADD_FLOAT(8, g_mechanism_debug.left.current_a);
+VOFA_ADD_FLOAT(9, DJmotor[1].velPID.SetVal);
+VOFA_ADD_FLOAT(10, DJmotor[1].velPID.CurVal);
+VOFA_ADD_FLOAT(11, g_mechanism_debug.right.current_a);
 static Mechanism_t s_mechanism;
 static osThreadId_t s_task_handle;
 static volatile uint32_t s_rx_ms[MECH_MOTOR_COUNT];
@@ -136,6 +143,12 @@ static bool Mechanism_MotorInit(void)
         isfinite(MECH_DJI_POSITION_KP) && MECH_DJI_POSITION_KP > 0.0f &&
         isfinite(MECH_DJI_SPEED_KP) && MECH_DJI_SPEED_KP > 0.0f &&
         isfinite(MECH_DJI_SPEED_KI) && MECH_DJI_SPEED_KI >= 0.0f &&
+        isfinite(MECH_DJI_SPEED_FEEDFORWARD) && MECH_DJI_SPEED_FEEDFORWARD >= 0.0f &&
+        MECH_DJI_SPEED_FEEDFORWARD <= 1.0f &&
+        isfinite(MECH_DJI_HOLD_DEADBAND_ENTER_DEG) && MECH_DJI_HOLD_DEADBAND_ENTER_DEG >= 0.0f &&
+        isfinite(MECH_DJI_HOLD_DEADBAND_EXIT_DEG) && MECH_DJI_HOLD_DEADBAND_EXIT_DEG >= 0.0f &&
+        (MECH_DJI_HOLD_DEADBAND_ENTER_DEG == 0.0f ||
+         MECH_DJI_HOLD_DEADBAND_EXIT_DEG > MECH_DJI_HOLD_DEADBAND_ENTER_DEG) &&
         (!g_mechanism_config.arm_enabled ||
          (isfinite(MECH_GO_KP) && MECH_GO_KP > 0.0f && MECH_GO_KP <= 25.599f &&
           isfinite(MECH_GO_KD) && MECH_GO_KD >= 0.0f && MECH_GO_KD <= 25.599f));
@@ -145,7 +158,11 @@ static bool Mechanism_MotorInit(void)
         DJMotor *p_motor = &DJmotor[i];
         p_motor->param.Gear_ratio = 1.0f; /* 外部传动在机构映射中处理 */
         p_motor->param.CurrentLimit_raw = MECH_DJI_CURRENT_LIMIT_RAW;
+        p_motor->param.PositionSpeedFeedforward = MECH_DJI_SPEED_FEEDFORWARD;
         p_motor->limit.PosRPMFlag = true;
+        p_motor->limit.PosDeadbandFlag = false;
+        p_motor->limit.PosDeadbandEnter_deg = MECH_DJI_HOLD_DEADBAND_ENTER_DEG;
+        p_motor->limit.PosDeadbandExit_deg = MECH_DJI_HOLD_DEADBAND_EXIT_DEG;
         /* 模板 PosRPMLimit 使用输出轴 rpm，驱动内部乘减速比。 */
         p_motor->limit.PosRPMLimit = g_mechanism_config.wrist_speed_limit_rpm;
         PID_Init(&p_motor->posPID, MECH_DJI_POSITION_KP, 0.0f, 0.0f, PIDPOS);
@@ -204,11 +221,15 @@ static void Mechanism_WriteOutputs(void)
         if (active)
         {
             DJmotor[i].valSet.angle_deg = p_output->shaft_target_deg[MECH_LEFT + i];
+            DJmotor[i].valSet.speed_rpm = p_output->dji_speed_rpm[i];
         }
         else
         {
             DJmotor[i].valSet.current_raw = 0;
+            DJmotor[i].valSet.speed_rpm = 0.0f;
         }
+        DJmotor[i].limit.PosDeadbandFlag = active && s_mechanism.state == MECH_STATE_HOLDING &&
+            MECH_DJI_HOLD_DEADBAND_ENTER_DEG > 0.0f;
         DJmotor[i].Begin = active;
         DJmotor[i].MODE_Set = active ? DJ_Position : DJ_Disable;
     }

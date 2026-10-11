@@ -57,11 +57,13 @@ void DJmotor_Init(void)
     dj2006_param.Reduction_ratio = M2006_RATIO;
     dj2006_param.PulsePerRound = 8191U;
     dj2006_param.CurrentLimit_raw = 10000;
+    dj2006_param.PositionSpeedFeedforward = 0.0f;
 
     dj3508_param.Gear_ratio = 1.0f;
     dj3508_param.Reduction_ratio = M3508_RATIO;
     dj3508_param.PulsePerRound = 8191U;
     dj3508_param.CurrentLimit_raw = 16000;
+    dj3508_param.PositionSpeedFeedforward = 0.0f;
 
     limit.CurrentLimitFlag = true;
     limit.IsLooseStuck = false;
@@ -70,6 +72,9 @@ void DJmotor_Init(void)
     limit.MinAngle_deg = -270.0f;
     limit.PosAngleLimitFlag = false;
     limit.PosRPMFlag = true;
+    limit.PosDeadbandFlag = false;
+    limit.PosDeadbandEnter_deg = 0.0f;
+    limit.PosDeadbandExit_deg = 0.0f;
     limit.PosRPMLimit = 430;
 
     limit.RPMLimitFlag = false;
@@ -84,6 +89,7 @@ void DJmotor_Init(void)
 
     argum.pulseLock = 0;
     argum.current_accum_raw = 0.0f;
+    argum.pos_deadband_active = false;
     argum.zeroCnt = 0;
     argum.GapCnt = 0;
 
@@ -276,7 +282,33 @@ void DJmotor_PositionMode(DJMotorPointer motor)
     motor->posPID.SetVal = (float)motor->valSet.PulseTotal;
     motor->posPID.CurVal = (float)motor->valNow.PulseTotal;
 
-    motor->velPID.SetVal = PID_Calculate(&motor->posPID);
+    /* 只停止小误差下的位置追赶；速度闭环继续制动并保留承载电流。 */
+    if (motor->limit.PosDeadbandFlag && motor->limit.PosDeadbandEnter_deg > 0.0f &&
+        motor->limit.PosDeadbandExit_deg > motor->limit.PosDeadbandEnter_deg)
+    {
+        float error_deg = ABS(motor->valSet.angle_deg - motor->valNow.angle_deg);
+        if (motor->argum.pos_deadband_active)
+        {
+            if (error_deg >= motor->limit.PosDeadbandExit_deg)
+            {
+                motor->argum.pos_deadband_active = false;
+            }
+        }
+        else if (error_deg <= motor->limit.PosDeadbandEnter_deg)
+        {
+            motor->argum.pos_deadband_active = true;
+        }
+    }
+    else
+    {
+        motor->argum.pos_deadband_active = false;
+    }
+    if (motor->argum.pos_deadband_active)
+    {
+        motor->posPID.SetVal = motor->posPID.CurVal;
+    }
+    motor->velPID.SetVal = PID_Calculate(&motor->posPID) +
+        motor->param.PositionSpeedFeedforward * motor->valSet.speed_rpm * Get_Total_Ratio(motor);
     if (motor->limit.PosRPMFlag)
     {
         motor->velPID.SetVal = ClampPeak(motor->velPID.SetVal, motor->limit.PosRPMLimit * Get_Total_Ratio(motor));
@@ -301,6 +333,7 @@ void DJmotor_ZeroMode(DJMotorPointer motor)
             motor->Begin = false;
             motor->valSet.current_raw = 0;
             motor->argum.current_accum_raw = 0.0f;
+            motor->argum.pos_deadband_active = false;
             /* 寻零结束不走 SwitchMode,这里手动清 PID 历史,重新使能时从零起步 */
             PID_Reset(&motor->posPID);
             PID_Reset(&motor->velPID);
@@ -347,6 +380,7 @@ static void DJmotor_SwitchMode(DJMotorPointer motor)
         motor->MODE_Cur = motor->MODE_Set;
         motor->valSet.current_raw = 0;
         motor->argum.current_accum_raw = 0.0f;
+        motor->argum.pos_deadband_active = false;
         motor->valSet.speed_rpm = 0;
         motor->valSet.angle_deg = motor->valNow.angle_deg;
         /* 清误差历史与位置环累加的目标速度(velPID.SetVal),避免残留值冲击新模式 */
@@ -378,6 +412,7 @@ void DJmotor_Func(void)
             case DJ_Disable:
                 motor->valSet.current_raw = 0;
                 motor->argum.current_accum_raw = 0.0f;
+                motor->argum.pos_deadband_active = false;
                 DJmotor_CurrentTransmit(motor);
                 continue;
                 break;
@@ -404,6 +439,8 @@ void DJmotor_Func(void)
             /* Begin=false(未初始化/寻零完成):强制 0 电流,防止残留累加电流持续输出 */
             motor->valSet.current_raw = 0;
             motor->argum.current_accum_raw = 0.0f;
+            motor->argum.pos_deadband_active = false;
+            motor->valSet.speed_rpm = 0.0f;
             motor->MODE_Set = DJ_Disable;
             motor->MODE_Cur = DJ_Disable;
         }

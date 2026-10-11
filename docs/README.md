@@ -5,7 +5,8 @@
 | 文档 | 何时阅读 |
 | --- | --- |
 | [控制方案](control-plan.md) | 理解三轴、气路、状态和手动操作 |
-| [参数配置](parameters.md) | 与机械组确认数据、填写配置 |
+| [参数配置](parameters.md) | 当前实机调试参数、单位和配置入口 |
+| [GO 与气路临时联调文档](temporary-go-air-integration.md) | 腕部已调好后，核对 GO/气路接口、资源冲突和分阶段接入流程 |
 | [工程结构](architecture.md) | 查找任务、中断、启动和内存布局 |
 | [硬件接口](hardware_notes.md) | 接 CAN、RS485、VOFA、气路 |
 | [二次开发指南](development.md) | 增加功能或重新生成 CubeMX |

@@ -16,9 +16,13 @@ extern const Mechanism_Config_t g_mechanism_config;
 
 /* 左右 C610 使用 CAN ID 1、2；GO 使用 RS485 ID 0。 */
 #define MECH_DJI_CURRENT_LIMIT_RAW 3000 /* C610 约 3 A */
-#define MECH_DJI_POSITION_KP 0.07f       /* 位置 P 环，输出转子 rpm */
-#define MECH_DJI_SPEED_KP 0.5f          /* 速度 PI 环，反馈转子 rpm */
-#define MECH_DJI_SPEED_KI 0.01f
+#define MECH_DJI_POSITION_KP 0.15f       /* 位置 P 环，输出转子 rpm */
+#define MECH_DJI_SPEED_KP 2.0f          /* 速度 PI 环，反馈转子 rpm */
+#define MECH_DJI_SPEED_KI 0.02f
+#define MECH_DJI_SPEED_FEEDFORWARD 1.0f /* 轨迹输出轴速度的前馈倍率，0 可关闭 */
+/* 仅轨迹结束后启用；单位为 M2006 输出轴 deg，ENTER=0 可关闭。 */
+#define MECH_DJI_HOLD_DEADBAND_ENTER_DEG 0.3f
+#define MECH_DJI_HOLD_DEADBAND_EXIT_DEG 0.6f
 #define MECH_GO_KP 0.0f                 /* 模板 GO 协议增益 */
 #define MECH_GO_KD 0.0f
 
