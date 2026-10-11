@@ -88,7 +88,7 @@ void MX_FREERTOS_Init(void);
   * @retval int
   */
 int main(void)
-{
+  {
 
   /* USER CODE BEGIN 1 */
 	uint32_t *SourceAddr = (uint32_t *)FLASH_BANK1_BASE;

@@ -14,11 +14,11 @@
 
 参数用途见 [参数配置](docs/parameters.md)，操作步骤见 [控制方案](docs/control-plan.md)，其余资料见 [文档索引](docs/README.md)。
 
-默认 `MECH_CONTROL_ENABLE=0`，上电电机失能。机构任务只读取反馈，不写电机参数、PID、使能或目标，也不初始化或下发机构气路。
+当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=0`，上电电机失能，由机构任务控制两台 M2006 腕部。GO 保持失能，不要求 GO 反馈或有效 GO 参数。`g_mechanism_debug.arm_enabled` 是只读模式标志；此模式中 `pose.arm_deg` 必须为 0，`measured.arm_deg=0` 表示机械臂未受控，并非 GO 的实际角度。
 
-先在 Keil Watch 添加 `DJmotor`，直接按模板方式测试电机：反馈查看 `DJmotor[i].valNow`；先写 `Begin=true` 和 `MODE_Set`，确认 `MODE_Cur` 已切换后再写 `valSet` 目标。停止写 `Begin=false`。GO 可添加 `Unitree_motors`，反馈查看 `data`，停止写 `enable=false`。此阶段不需要填写机构传动比和增益，具体字段见 [控制方案](docs/control-plan.md)。
+填写实物腕部参数，将夹爪放到约定零位后，依次写 `command=2` 标零、`command=3` 使能；填写 `pose.pitch_deg/roll_deg`，最后写 `command=4`，两台 M2006 按同步五次轨迹运动。停止全部输出写 `command=1`。命令消费后回到 0，结果见 `result`。运动保留 100 ms 反馈超时和越界保护；`air_ready=false` 不妨碍运动命令，气路参数未填写时不可发送 `command=5`。
 
-`g_mechanism_debug` 可观测三台电机反馈；默认 `motion_ready/air_ready=false`，机构命令返回 `MECH_BAD_STATE`。完成电机测试后，填写实物参数，将 `MECH_CONTROL_ENABLE` 改为 1，重新编译下载。再将机构放到约定零位，依次执行 `command=2` 标零、`command=3` 使能；填写 `pose.arm_deg/pitch_deg/roll_deg` 后写 `command=4` 开始运动。机构控制期间停止全部输出写 `command=1`。命令消费后回到 0，结果见 `result`。
+需要直接 Watch 测试模板电机对象时，将 `MECH_CONTROL_ENABLE` 改为 0 并重新编译下载。此时机构任务只读取反馈，不接管电机参数、PID、使能、目标或气路，机构命令返回 `MECH_BAD_STATE`。添加 `DJmotor`，先写 `Begin=true` 和 `MODE_Set`，确认 `MODE_Cur` 已切换后再写 `valSet`；停止写 `Begin=false`。恢复整机控制时，将 `MECH_GO_CONTROL_ENABLE` 改为 1，填写有效 GO 参数并重新编译下载。具体字段和步骤见 [控制方案](docs/control-plan.md)。
 
 ## 构建
 

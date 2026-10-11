@@ -50,6 +50,7 @@ typedef struct
 
     bool motion_ready;     /* 机构控制已启用且机械参数、增益有效 */
     bool air_ready;        /* 机构控制已启用且气路配置有效 */
+    bool arm_enabled;      /* GO 是否参与机构控制；false 时 arm_deg 必须为 0 */
     Mechanism_State_t state;
     Mechanism_Result_t fault;
     Mechanism_Pose_t measured; /* READY/HOLDING/MOVING 状态下有效 */

@@ -83,6 +83,7 @@ void DJmotor_Init(void)
     statusFlag.ZeroFlag = false;
 
     argum.pulseLock = 0;
+    argum.current_accum_raw = 0.0f;
     argum.zeroCnt = 0;
     argum.GapCnt = 0;
 
@@ -243,6 +244,15 @@ void DJmotor_CurrentTransmit(DJMotorPointer motor)
     }
 }
 
+static void DJmotor_UpdateCurrent(DJMotorPointer motor, int16_t current_limit_raw)
+{
+    /* 保留小于 1 raw 的 PI 增量；累加状态自身限幅，避免饱和时继续增长。 */
+    motor->argum.current_accum_raw = ClampPeak(motor->argum.current_accum_raw +
+                                                PID_Calculate(&motor->velPID),
+                                             (float)current_limit_raw);
+    motor->valSet.current_raw = (int16_t)motor->argum.current_accum_raw;
+}
+
 void DJmotor_SpeedMode(DJMotorPointer motor)
 {
     if (motor->limit.RPMLimitFlag)
@@ -251,8 +261,7 @@ void DJmotor_SpeedMode(DJMotorPointer motor)
     }
     motor->velPID.SetVal = (float)motor->valSet.speed_rpm * Get_Total_Ratio(motor);
     motor->velPID.CurVal = (float)motor->valNow.speed_rpm * Get_Total_Ratio(motor);
-    motor->valSet.current_raw += PID_Calculate(&motor->velPID);
-    motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
+    DJmotor_UpdateCurrent(motor, motor->param.CurrentLimit_raw);
 }
 
 void DJmotor_PositionMode(DJMotorPointer motor)
@@ -274,16 +283,14 @@ void DJmotor_PositionMode(DJMotorPointer motor)
     }
     motor->velPID.CurVal = (float)motor->valNow.speed_rpm * Get_Total_Ratio(motor);
 
-    motor->valSet.current_raw += PID_Calculate(&motor->velPID);
-    motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
+    DJmotor_UpdateCurrent(motor, motor->param.CurrentLimit_raw);
 }
 
 void DJmotor_ZeroMode(DJMotorPointer motor)
 {
     motor->velPID.SetVal = (float)motor->limit.ZeroRPMLimit * Get_Total_Ratio(motor);
     motor->velPID.CurVal = (float)motor->valNow.speed_rpm * Get_Total_Ratio(motor);
-    motor->valSet.current_raw += PID_Calculate(&motor->velPID);
-    motor->valSet.current_raw = (int16_t)ClampPeak(motor->valSet.current_raw, motor->limit.ZeroCurrentLimit_raw);
+    DJmotor_UpdateCurrent(motor, motor->limit.ZeroCurrentLimit_raw);
 
     if (ABS(motor->valNow.PulseGap) < Zero_Distance)
     {
@@ -292,6 +299,8 @@ void DJmotor_ZeroMode(DJMotorPointer motor)
             motor->argum.zeroCnt = 0;
             motor->statusFlag.ZeroFlag = true;
             motor->Begin = false;
+            motor->valSet.current_raw = 0;
+            motor->argum.current_accum_raw = 0.0f;
             /* 寻零结束不走 SwitchMode,这里手动清 PID 历史,重新使能时从零起步 */
             PID_Reset(&motor->posPID);
             PID_Reset(&motor->velPID);
@@ -337,6 +346,7 @@ static void DJmotor_SwitchMode(DJMotorPointer motor)
     {
         motor->MODE_Cur = motor->MODE_Set;
         motor->valSet.current_raw = 0;
+        motor->argum.current_accum_raw = 0.0f;
         motor->valSet.speed_rpm = 0;
         motor->valSet.angle_deg = motor->valNow.angle_deg;
         /* 清误差历史与位置环累加的目标速度(velPID.SetVal),避免残留值冲击新模式 */
@@ -367,6 +377,7 @@ void DJmotor_Func(void)
             {
             case DJ_Disable:
                 motor->valSet.current_raw = 0;
+                motor->argum.current_accum_raw = 0.0f;
                 DJmotor_CurrentTransmit(motor);
                 continue;
                 break;
@@ -381,7 +392,8 @@ void DJmotor_Func(void)
                 break;
             case DJ_Current:
                 /* 直通电流:任务层每周期写 valSet.current_raw,这里补限幅 */
-                ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
+                motor->valSet.current_raw =
+                    (int16_t)ClampPeak(motor->valSet.current_raw, motor->param.CurrentLimit_raw);
                 break;
             default:
                 break;
@@ -391,6 +403,7 @@ void DJmotor_Func(void)
         {
             /* Begin=false(未初始化/寻零完成):强制 0 电流,防止残留累加电流持续输出 */
             motor->valSet.current_raw = 0;
+            motor->argum.current_accum_raw = 0.0f;
             motor->MODE_Set = DJ_Disable;
             motor->MODE_Cur = DJ_Disable;
         }

@@ -62,6 +62,7 @@ typedef struct
 /* 角度均为度；传动比仅描述电机减速器输出轴之后的机械传动。 */
 typedef struct
 {
+    bool arm_enabled;         /* false：仅控制差速腕部，GO 失能且不要求反馈 */
     float arm_motor_ratio;     /* GO 输出轴角 / 机械臂角，带正负方向 */
     float pitch_motor_ratio;   /* 左 M2006 输出轴角 / 俯仰角，带正负方向 */
     float roll_motor_ratio;    /* 左 M2006 输出轴角 / 旋转角，带正负方向 */
@@ -107,7 +108,7 @@ typedef struct
     Mechanism_Output_t output;
 } Mechanism_t;
 
-/** @brief 检查传动比、含零位的行程和运动时间、速度上限。 */
+/** @brief 检查启用轴的传动比、含零位的行程和运动时间、速度上限。 */
 bool Mechanism_ConfigValid(const Mechanism_Config_t *p_config);
 /** @brief 初始化为失能、未标零状态；时间单位为毫秒。 */
 void Mechanism_Init(Mechanism_t *p_mechanism, const Mechanism_Config_t *p_config, uint32_t now_ms);

@@ -11,6 +11,7 @@
 static Mechanism_Config_t Test_Config(void)
 {
     const Mechanism_Config_t config = {
+        .arm_enabled = true,
         .arm_motor_ratio = -2.0f,
         .pitch_motor_ratio = 3.0f,
         .roll_motor_ratio = -4.0f,
@@ -63,8 +64,10 @@ static void Test_Configuration(void)
     Mechanism_t mechanism;
     Mechanism_Config_t config = Test_Config();
     Mechanism_Feedback_t feedback = Test_Feedback(0U);
-    assert(!Mechanism_ConfigValid(&g_mechanism_config));
-    Mechanism_Init(&mechanism, &g_mechanism_config, 0U);
+    Mechanism_Config_t invalid_config = config;
+    invalid_config.arm_motor_ratio = 0.0f;
+    assert(!Mechanism_ConfigValid(&invalid_config));
+    Mechanism_Init(&mechanism, &invalid_config, 0U);
     assert(Mechanism_CaptureZero(&mechanism, &feedback, 0U) == MECH_BAD_CONFIG);
     assert(Mechanism_Enable(&mechanism, &feedback, 0U) == MECH_BAD_CONFIG);
     assert(Mechanism_ConfigValid(&config));
@@ -88,6 +91,119 @@ static void Test_Configuration(void)
     config = Test_Config();
     config.wrist_speed_limit_rpm = 0;
     assert(!Mechanism_ConfigValid(&config));
+}
+
+static Mechanism_Config_t Test_WristConfig(void)
+{
+    Mechanism_Config_t config = Test_Config();
+    config.arm_enabled = false;
+    config.arm_motor_ratio = 0.0f;
+    config.arm_range = (Mechanism_Range_t){0.0f, 0.0f};
+    config.go_speed_limit_deg_s = 0.0f;
+    return config;
+}
+
+static void Test_WristFeedback(Mechanism_Feedback_t *p_feedback, uint32_t now_ms)
+{
+    /* GO 始终缺失且上报错误，两台 DJI 独立保持有效反馈。 */
+    p_feedback->seen[MECH_GO] = false;
+    p_feedback->shaft_deg[MECH_GO] = NAN;
+    p_feedback->motor_error = true;
+    for (unsigned i = MECH_LEFT; i < MECH_MOTOR_COUNT; ++i)
+    {
+        p_feedback->rx_ms[i] = now_ms;
+        p_feedback->seen[i] = true;
+    }
+}
+
+static void Test_WristOnlyMotion(void)
+{
+    Mechanism_Config_t config = Test_WristConfig();
+    Mechanism_t mechanism;
+    Mechanism_Feedback_t feedback = Test_Feedback(0U);
+    const Mechanism_Pose_t target = {0.0f, 20.0f, -10.0f};
+    assert(Mechanism_ConfigValid(&config));
+    /* 未启用的 GO 参数不参与计算，也不会污染腕部轨迹。 */
+    config.arm_motor_ratio = NAN;
+    config.arm_range = (Mechanism_Range_t){NAN, NAN};
+    config.go_speed_limit_deg_s = NAN;
+    assert(Mechanism_ConfigValid(&config));
+    Test_WristFeedback(&feedback, 0U);
+    Test_Start(&mechanism, &config, &feedback, 0U);
+    Test_Near(mechanism.zero_shaft_deg[MECH_GO], 0.0f);
+    Test_Near(mechanism.output.shaft_target_deg[MECH_GO], 0.0f);
+    Mechanism_Pose_t invalid = target;
+    invalid.arm_deg = 1.0f;
+    assert(Mechanism_SetTarget(&mechanism, &invalid, 0U) == MECH_BAD_TARGET);
+    invalid.arm_deg = NAN;
+    assert(Mechanism_SetTarget(&mechanism, &invalid, 0U) == MECH_BAD_TARGET);
+    assert(Mechanism_SetTarget(&mechanism, &target, 0U) == MECH_OK);
+    Test_Near(mechanism.duration_s, 3.125f);
+    for (uint32_t now_ms = 5U; now_ms <= 4000U; now_ms += 5U)
+    {
+        float previous_left = mechanism.output.shaft_target_deg[MECH_LEFT];
+        float previous_right = mechanism.output.shaft_target_deg[MECH_RIGHT];
+        feedback.shaft_deg[MECH_LEFT] = previous_left;
+        feedback.shaft_deg[MECH_RIGHT] = previous_right;
+        Test_WristFeedback(&feedback, now_ms);
+        Mechanism_Tick(&mechanism, &feedback, now_ms);
+        assert(mechanism.output.motors_enabled);
+        Test_Near(mechanism.measured.arm_deg, 0.0f);
+        Test_Near(mechanism.setpoint.arm_deg, 0.0f);
+        Test_Near(mechanism.output.shaft_target_deg[MECH_GO], 0.0f);
+        Test_Near(mechanism.output.go_speed_deg_s, 0.0f);
+        Test_Near(mechanism.setpoint.pitch_deg / target.pitch_deg,
+                  mechanism.setpoint.roll_deg / target.roll_deg);
+        assert(fabsf(mechanism.output.shaft_target_deg[MECH_LEFT] - previous_left) / 0.005f <= 60.1f);
+        assert(fabsf(mechanism.output.shaft_target_deg[MECH_RIGHT] - previous_right) / 0.005f <= 60.1f);
+    }
+    assert(mechanism.state == MECH_STATE_HOLDING);
+    Test_Near(mechanism.output.shaft_target_deg[MECH_LEFT], 60.0f);
+    Test_Near(mechanism.output.shaft_target_deg[MECH_RIGHT], 40.0f);
+    Mechanism_Stop(&mechanism);
+    assert(!mechanism.output.motors_enabled);
+    assert(Mechanism_Enable(&mechanism, &feedback, 4000U) == MECH_OK);
+    Test_Near(mechanism.measured.pitch_deg, target.pitch_deg);
+    Test_Near(mechanism.measured.roll_deg, target.roll_deg);
+}
+
+static void Test_WristOnlyFaults(void)
+{
+    Mechanism_Config_t config = Test_WristConfig();
+    for (unsigned motor = MECH_LEFT; motor < MECH_MOTOR_COUNT; ++motor)
+    {
+        Mechanism_t mechanism;
+        Mechanism_Feedback_t feedback = Test_Feedback(0U);
+        Test_WristFeedback(&feedback, 0U);
+        feedback.seen[motor] = false;
+        Mechanism_Init(&mechanism, &config, 0U);
+        assert(Mechanism_CaptureZero(&mechanism, &feedback, 0U) == MECH_FEEDBACK_LOST);
+        Test_WristFeedback(&feedback, 0U);
+        Test_Start(&mechanism, &config, &feedback, 0U);
+        assert(Mechanism_SetAir(&mechanism, true, MECH_CLAW_CLOSE) == MECH_OK);
+        Test_WristFeedback(&feedback, 101U);
+        feedback.rx_ms[motor] = 0U;
+        Mechanism_Tick(&mechanism, &feedback, 101U);
+        assert(mechanism.state == MECH_STATE_FAULT && mechanism.fault == MECH_FEEDBACK_LOST);
+        assert(!mechanism.output.motors_enabled && !mechanism.output.pump_on);
+        Test_WristFeedback(&feedback, 105U);
+        Mechanism_Stop(&mechanism);
+        assert(Mechanism_Enable(&mechanism, &feedback, 105U) == MECH_NO_ZERO);
+        assert(Mechanism_CaptureZero(&mechanism, &feedback, 105U) == MECH_OK);
+        assert(Mechanism_Enable(&mechanism, &feedback, 105U) == MECH_OK);
+        feedback.shaft_deg[motor] = NAN;
+        Mechanism_Tick(&mechanism, &feedback, 110U);
+        assert(mechanism.fault == MECH_FEEDBACK_LOST);
+    }
+    Mechanism_t mechanism;
+    Mechanism_Feedback_t feedback = Test_Feedback(0U);
+    Test_WristFeedback(&feedback, 0U);
+    Test_Start(&mechanism, &config, &feedback, 0U);
+    feedback.shaft_deg[MECH_LEFT] += 600.0f;
+    feedback.shaft_deg[MECH_RIGHT] -= 600.0f;
+    Test_WristFeedback(&feedback, 5U);
+    Mechanism_Tick(&mechanism, &feedback, 5U);
+    assert(mechanism.state == MECH_STATE_FAULT && mechanism.fault == MECH_OUT_OF_RANGE);
 }
 
 static void Test_MappingAndEnable(void)
@@ -284,6 +400,8 @@ static void Test_DisabledAirAndTickWrap(void)
 int main(void)
 {
     Test_Configuration();
+    Test_WristOnlyMotion();
+    Test_WristOnlyFaults();
     Test_MappingAndEnable();
     Test_SynchronizedMotion();
     Test_StopAndFaultRecovery();

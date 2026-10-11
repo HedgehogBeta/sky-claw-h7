@@ -23,6 +23,10 @@
 #error "MECH_CONTROL_ENABLE 必须为 0 或 1"
 #endif
 
+#if MECH_GO_CONTROL_ENABLE != 0 && MECH_GO_CONTROL_ENABLE != 1
+#error "MECH_GO_CONTROL_ENABLE 必须为 0 或 1"
+#endif
+
 volatile Mechanism_Debug_t g_mechanism_debug;
 /* 直接观测机构角度，不另存一份发送数据。 */
 VOFA_ADD_FLOAT(0, g_mechanism_debug.measured.arm_deg);
@@ -132,8 +136,9 @@ static bool Mechanism_MotorInit(void)
         isfinite(MECH_DJI_POSITION_KP) && MECH_DJI_POSITION_KP > 0.0f &&
         isfinite(MECH_DJI_SPEED_KP) && MECH_DJI_SPEED_KP > 0.0f &&
         isfinite(MECH_DJI_SPEED_KI) && MECH_DJI_SPEED_KI >= 0.0f &&
-        isfinite(MECH_GO_KP) && MECH_GO_KP > 0.0f && MECH_GO_KP <= 25.599f &&
-        isfinite(MECH_GO_KD) && MECH_GO_KD >= 0.0f && MECH_GO_KD <= 25.599f;
+        (!g_mechanism_config.arm_enabled ||
+         (isfinite(MECH_GO_KP) && MECH_GO_KP > 0.0f && MECH_GO_KP <= 25.599f &&
+          isfinite(MECH_GO_KD) && MECH_GO_KD >= 0.0f && MECH_GO_KD <= 25.599f));
     uint32_t mask = Mechanism_IrqLock();
     for (unsigned i = 0; i < 2; ++i)
     {
@@ -146,8 +151,11 @@ static bool Mechanism_MotorInit(void)
         PID_Init(&p_motor->posPID, MECH_DJI_POSITION_KP, 0.0f, 0.0f, PIDPOS);
         PID_Init(&p_motor->velPID, MECH_DJI_SPEED_KP, MECH_DJI_SPEED_KI, 0.0f, PIDINC);
     }
-    Unitree_motors[0].cmd.kp = MECH_GO_KP;
-    Unitree_motors[0].cmd.kd = MECH_GO_KD;
+    if (g_mechanism_config.arm_enabled)
+    {
+        Unitree_motors[0].cmd.kp = MECH_GO_KP;
+        Unitree_motors[0].cmd.kd = MECH_GO_KD;
+    }
     __set_PRIMASK(mask);
     return valid && Mechanism_ConfigValid(&g_mechanism_config);
 }
@@ -204,10 +212,17 @@ static void Mechanism_WriteOutputs(void)
         DJmotor[i].Begin = active;
         DJmotor[i].MODE_Set = active ? DJ_Position : DJ_Disable;
     }
-    Unitree_motors[0].cmd.position = p_output->shaft_target_deg[MECH_GO] / MECH_DEG_PER_RAD;
-    Unitree_motors[0].cmd.speed = p_output->go_speed_deg_s / MECH_DEG_PER_RAD;
+    if (g_mechanism_config.arm_enabled)
+    {
+        Unitree_motors[0].cmd.position = p_output->shaft_target_deg[MECH_GO] / MECH_DEG_PER_RAD;
+        Unitree_motors[0].cmd.speed = p_output->go_speed_deg_s / MECH_DEG_PER_RAD;
+    }
+    else
+    {
+        Unitree_motors[0].cmd.speed = 0.0f;
+    }
     Unitree_motors[0].cmd.torque = 0.0f;
-    Unitree_motors[0].enable = p_output->motors_enabled;
+    Unitree_motors[0].enable = g_mechanism_config.arm_enabled && p_output->motors_enabled;
     __set_PRIMASK(mask);
 
     if (s_air_ready)
@@ -298,6 +313,7 @@ static void Mechanism_Task(void *argument)
     }
     g_mechanism_debug.motion_ready = s_motion_ready;
     g_mechanism_debug.air_ready = s_air_ready;
+    g_mechanism_debug.arm_enabled = g_mechanism_config.arm_enabled;
     Mechanism_UpdateDebug();
     for (;;)
     {

@@ -4,19 +4,20 @@
 #include "mechanism_config.h"
 
 const Mechanism_Config_t g_mechanism_config = {
+    .arm_enabled = MECH_GO_CONTROL_ENABLE != 0,
     /* 差速关系：L = pitch_ratio * pitch + roll_ratio * roll；
      *           R = right_direction * (pitch_ratio * pitch - roll_ratio * roll)。
      * 正负号按机械零位、小角度单轴测试确认；两侧使用相同齿轮传动。
      */
     .arm_motor_ratio = 0.0f,
-    .pitch_motor_ratio = 0.0f,
-    .roll_motor_ratio = 0.0f,
-    .right_motor_direction = 1,
+    .pitch_motor_ratio = -1.0f,
+    .roll_motor_ratio = 2.0f,
+    .right_motor_direction = -1,
 
     /* 关节允许范围（deg），必须包含约定的 0° 机械零位。 */
     .arm_range = {0.0f, 0.0f},
-    .pitch_range = {0.0f, 0.0f},
-    .roll_range = {0.0f, 0.0f},
+    .pitch_range = {-90.0f, 180.0f},
+    .roll_range = {-180.0f, 180.0f},
 
     /* 先用慢速调试；组合运动超过电机速度上限时自动延长运动时间。 */
     .move_time_s = 2.0f,

@@ -36,7 +36,7 @@ extern "C"
     {
         volatile int16_t current_raw;  // 直接设置电流
         volatile float angle_deg;      // 输出角度, degree
-        volatile int16_t speed_rpm;    // valSet: 输出轴 rpm;valNow: 转子 rpm(原始反馈),m2006额定转速为416rpm,m3508为469rpm
+        volatile float speed_rpm;      // 目标和反馈均为输出轴 rpm；保留减速后的低速精度
         volatile float current_A;      // 反馈电流, A
         volatile int16_t PulseRead;    // raw encoder pulse
         volatile int16_t PulseGap;     // pulse delta
@@ -78,6 +78,7 @@ extern "C"
     typedef struct
     {
         volatile int32_t pulseLock; // 原先用于使能固定的字段,现在已无用
+        float current_accum_raw;   // 闭环电流以浮点累加，下发 CAN 时才转换为整数
         uint16_t zeroCnt;
         uint16_t GapCnt;
     } DJmotorArgum;
