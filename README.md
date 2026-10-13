@@ -12,15 +12,9 @@
 | 电机与气路适配、Watch 命令、机构任务 | [mechanism_app.c](APL/mechanism/mechanism_app.c) |
 | 电机数量、总线和内部减速比 | [motor_cfg.h](FML/motor/motor_cfg.h) |
 
-当前参数与调参方法见 [参数配置](docs/parameters.md)，操作步骤见 [控制方案](docs/control-plan.md)，其余资料见 [文档索引](docs/README.md)。
+当前参数见 [参数配置](docs/parameters.md)，操作步骤见 [控制方案](docs/control-plan.md)，其余资料见 [文档索引](docs/README.md)。
 
-当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=0`，机构任务控制两台 M2006 腕部，上电电机失能，GO 保持失能。`g_mechanism_debug.pose.arm_deg` 必须为 0，`measured.arm_deg=0` 表示机械臂未受控，不代表实际角度。
-
-在 Watch 添加 `g_mechanism_debug`，将夹爪放到约定零位，依次写 `command=2` 标零、`command=3` 使能；填写 `pose.pitch_deg/roll_deg` 后写 `command=4`，两台电机同步运动。每条命令等待 `command=0`，检查 `result` 后继续；`command=1` 停止全部输出。运动保留 100 ms 反馈超时和越界保护。气路未就绪不妨碍运动，参数未填写时不要发送 `command=5`。
-
-直接 Watch 调试、恢复 GO 控制和故障处理见 [控制方案](docs/control-plan.md)。
-
-腕部初步调试完成后的 GO 电机与气路接入，见 [临时联调文档](docs/temporary-go-air-integration.md)，包含现有接口、资源与状态关系、分步测试和待确认项。
+当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=1`，机构任务接管三台电机；气路未配置，`air_ready=false`。在 Watch 添加 `g_mechanism_debug`，将机构和夹爪放到约定零位，依次写 `command=2` 标零、`command=3` 使能；填写 `pose.arm_deg/pitch_deg/roll_deg` 后写 `command=4`。每条命令等待 `command=0`，检查 `result` 后继续；`command=1` 停止全部输出。运动保留 100 ms 反馈超时和越界保护。气路未就绪不妨碍运动。
 
 ## 构建
 

@@ -12,7 +12,7 @@ extern const Mechanism_Config_t g_mechanism_config;
 #define MECH_CONTROL_ENABLE 1
 
 /* 0：只测试两台 M2006，GO 保持失能；1：同时控制 GO 机械臂。 */
-#define MECH_GO_CONTROL_ENABLE 0
+#define MECH_GO_CONTROL_ENABLE 1
 
 /* 左右 C610 使用 CAN ID 1、2；GO 使用 RS485 ID 0。 */
 #define MECH_DJI_CURRENT_LIMIT_RAW 3000 /* C610 约 3 A */
@@ -23,8 +23,8 @@ extern const Mechanism_Config_t g_mechanism_config;
 /* 仅轨迹结束后启用；单位为 M2006 输出轴 deg，ENTER=0 可关闭。 */
 #define MECH_DJI_HOLD_DEADBAND_ENTER_DEG 0.3f
 #define MECH_DJI_HOLD_DEADBAND_EXIT_DEG 0.6f
-#define MECH_GO_KP 0.0f                 /* 模板 GO 协议增益 */
-#define MECH_GO_KD 0.0f
+#define MECH_GO_KP 4.8f                 /* 模板 GO 协议增益 */
+#define MECH_GO_KD 0.02f
 
 /* 泵引脚须在 CubeMX 中配置为推挽输出，初始电平为关闭电平。 */
 #define MECH_PUMP_GPIO_PORT ((GPIO_TypeDef *)0)

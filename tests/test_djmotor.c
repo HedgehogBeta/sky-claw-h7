@@ -149,14 +149,17 @@ static void Test_PositionCurrentLimitAndFrame(void)
     assert(Test_TxCurrent(0U) == 3000);
     assert(Test_TxCurrent(1U) == -3000);
 
-    /* An opposing error must release saturation without hidden windup. */
+    /* The configured speed P gain must reverse current to brake this overspeed;
+     * the accumulator must leave its previous saturation and remain bounded. */
     Test_ReceiveSpeed(0U, 4320);
     Test_ReceiveSpeed(1U, -4320);
     DJmotor_Func();
     assert(Test_TxCurrent(0U) < 3000);
     assert(Test_TxCurrent(1U) > -3000);
-    assert(Test_TxCurrent(0U) > 0);
-    assert(Test_TxCurrent(1U) < 0);
+    assert(Test_TxCurrent(0U) >= -MECH_DJI_CURRENT_LIMIT_RAW);
+    assert(Test_TxCurrent(1U) <= MECH_DJI_CURRENT_LIMIT_RAW);
+    assert(Test_TxCurrent(0U) < 0);
+    assert(Test_TxCurrent(1U) > 0);
 }
 
 static void Test_DisableAndModeSwitchClearCurrent(void)
@@ -249,6 +252,7 @@ static void Test_PositionSpeedFeedforward(void)
         assert(fabsf(motor->velPID.SetVal - expected) < 0.0001f);
 
         /* Each component is below the cap; their sum must be capped afterward. */
+        motor->valSet.angle_deg = directions[i] * 0.5f;
         motor->valSet.speed_rpm = directions[i] * 0.5f;
         motor->limit.PosRPMLimit = 2;
         DJmotor_Func();

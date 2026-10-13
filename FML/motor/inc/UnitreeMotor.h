@@ -7,8 +7,8 @@
  * separate protocol header.
  *
  * NOTE: GO-M8010-6 has an absolute encoder. This driver does NOT perform
- * auto zero on power-up; call UnitreeMotor_SetZero() at the mechanical zero
- * before enabling position control.
+ * auto zero on power-up. At the mechanical zero, keep enable=false and set
+ * set_zero=true; a fresh feedback frame is required before zero is captured.
  */
 #ifndef UNITREEMOTOR_H
 #define UNITREEMOTOR_H
@@ -49,18 +49,18 @@ extern "C"
 
     typedef struct
     {
-        int16_t torque_des; /* 期望关节输出力矩, N.m (q8) */
-        int16_t speed_des;  /* 期望关节输出速度, rad/s (q8) */
-        int32_t pos_des;    /* 期望关节输出位置, rad (q15) */
-        int16_t kp;         /* 关节刚度, q15 */
-        int16_t kd;         /* 关节阻尼, q15 */
+        int16_t torque_des; /* 转子力矩, N.m (q8) */
+        int16_t speed_des;  /* 转子转速, rev/s (q8) */
+        int32_t pos_des;    /* 转子转数, rev (q15) */
+        int16_t kp;         /* 转子侧协议刚度增益 */
+        int16_t kd;         /* 转子侧协议阻尼增益 */
     } UnitreeMotorWireCmd_t;
 
     typedef struct
     {
-        int16_t torque;           /* 实际关节输出力矩, N.m (q8) */
-        int16_t speed;            /* 实际关节输出速度, rad/s (q8) */
-        int32_t pos;              /* 实际关节输出位置, rad (q15) */
+        int16_t torque;           /* 转子力矩, N.m (q8) */
+        int16_t speed;            /* 转子转速, rev/s (q8) */
+        int32_t pos;              /* 转子转数, rev (q15) */
         int8_t temp;              /* 电机温度, -128~127 ℃ */
         uint8_t error : 3;        /* 错误标识 */
         uint16_t foot_force : 12; /* 足端力/气压传感器 12bit */
@@ -102,11 +102,11 @@ extern "C"
     {
         uint16_t id;    /* 电机 ID, 15 为广播 */
         uint16_t mode;  /* UnitreeMotorMode_t */
-        float torque;   /* 期望关节输出力矩, N.m */
-        float speed;    /* 期望关节输出速度, rad/s */
-        float position; /* 期望关节输出位置, rad */
-        float kp;       /* 关节刚度 0~25.599 */
-        float kd;       /* 关节阻尼 0~25.599 */
+        float torque;   /* 期望减速器输出轴力矩, N.m */
+        float speed;    /* 期望减速器输出轴速度, rad/s */
+        float position; /* 期望减速器输出轴位置, rad */
+        float kp;       /* 转子侧协议刚度增益 0~25.599 */
+        float kd;       /* 转子侧协议阻尼增益 0~25.599 */
         UnitreeMotorControlFrame_t frame;
     } UnitreeMotorCmd_t;
 
@@ -119,10 +119,10 @@ extern "C"
         float torque;      /* 实际关节输出力矩, N.m */
         float speed;       /* 实际关节输出速度, rad/s */
         float position;    /* 实际关节输出位置, rad(已减去零位偏移) */
-        int correct;       /* 1=帧完整/CRC 正确 */
+        int correct;       /* 1=有效反馈；超过100ms无新帧时置0 */
         int foot_force;    /* 足端力原始值 */
         uint16_t calc_crc; /* 本机计算的 CRC */
-        uint32_t timeout;  /* 通讯超时计数 */
+        uint32_t timeout;  /* 反馈超时或接收错误恢复次数 */
         uint32_t bad_msg;  /* CRC/包头错误计数 */
         UnitreeMotorFeedbackFrame_t frame;
     } UnitreeMotorData_t;
@@ -130,7 +130,7 @@ extern "C"
     typedef struct
     {
         volatile bool enable;   /* true=发送 FOC 模式, false=发送空闲模式 */
-        volatile bool set_zero; /* true=下一次 Func 将该电机当前位置设为零点 */
+        volatile bool set_zero; /* 失能且反馈新鲜时，将当前位置设为零点 */
         bool begin;             /* true=参与周期发送 */
 
         UnitreeMotorCmd_t cmd;   /* 用户写目标值 */

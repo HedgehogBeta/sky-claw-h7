@@ -13,7 +13,7 @@
 
 机构控制与硬件适配保持两个职责明确的模块。模板驱动使用原有接口，新写 C 代码遵循 [C 语言规范](coding-standard.md)。
 
-当前腕部参数已完成实机调试，日常操作使用 `g_mechanism_debug.command` 标零和控制机构。需要绕过机构层直接调试电机时，再将 `MECH_CONTROL_ENABLE` 改为 0 并重新编译下载。操作步骤见 [控制方案](control-plan.md)，当前配置见 [参数配置](parameters.md)。
+三轴参数已完成实机标定，日常操作使用 `g_mechanism_debug.command` 标零和控制机构。需要绕过机构层直接调试电机时，再将 `MECH_CONTROL_ENABLE` 改为 0 并重新编译下载。操作步骤见 [控制方案](control-plan.md)，当前配置见 [参数配置](parameters.md)。
 
 ## 重新生成
 

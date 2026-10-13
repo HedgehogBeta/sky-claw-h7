@@ -1,10 +1,10 @@
 # 参数配置
 
-以下记录本次腕部实机调试后的配置。最新数值以 [mechanism_config.h](../APL/mechanism/mechanism_config.h) 和 [mechanism_config.c](../APL/mechanism/mechanism_config.c) 为准；更换负载、传动或启用 GO 后需重新验证。
+以下为三轴实机标定后的配置。最新数值以 [mechanism_config.h](../APL/mechanism/mechanism_config.h) 和 [mechanism_config.c](../APL/mechanism/mechanism_config.c) 为准；更换负载、传动或重新标定后需重新验证。
 
 ## 当前腕部参数
 
-当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=0`，机构任务控制两台 M2006，GO 保持失能。
+当前 `MECH_CONTROL_ENABLE=1`、`MECH_GO_CONTROL_ENABLE=1`，机构任务控制 GO 与两台 M2006。
 
 | 参数 | 当前值 | 含义 |
 | --- | --- | --- |
@@ -23,12 +23,24 @@
 
 位置环 KI/KD、速度环 KD 均为 0。传动比不包含电机内部减速比；死区角度指 M2006 减速器输出轴误差，不代表夹爪端角度精度。工作原理与操作见 [控制方案](control-plan.md)。
 
+## GO 电机参数
+
+| 参数 | 当前值 | 含义 |
+| --- | --- | --- |
+| `arm_motor_ratio` | 1.0 | GO 减速器输出轴角 / 机械臂角，带方向，不含内部减速比 |
+| `arm_range` | -100°～100° | 机械臂允许范围，含 0° 机械零位 |
+| `MECH_GO_KP` | 4.8 | 转子侧协议刚度，输出轴刚度约为该值 × 6.33² |
+| `MECH_GO_KD` | 0.02 | 转子侧协议阻尼 |
+| `go_speed_limit_deg_s` | 30°/s | GO 输出轴规划速度上限，用于计算轨迹时长 |
+
+协议增益上限为 25.599，超限会被驱动钳位。位置、速度和力矩由驱动在减速器输出轴与转子侧之间换算，Watch 中不要再乘内部减速比 6.33。驱动零位由 `set_zero` 记录且仅保存在 RAM，重新下载或断电后需重新标零；机构零位由 `command=2` 记录，两者不同。
+
 ## 总线与周期
 
 | 项目 | 配置 |
 | --- | --- |
 | M2006 | FDCAN3，CAN ID 1/2，内部减速比 36 |
-| GO-M8010-6 | UART7，ID 0，4 Mbps，内部减速比 6.33；当前失能 |
+| GO-M8010-6 | UART7，ID 0，4 Mbps，内部减速比 6.33；上电失能 |
 | 电机闭环 / 机构任务 | 1 ms / 5 ms |
 | 受控电机反馈超时 | 100 ms |
 
@@ -36,8 +48,7 @@
 
 ## 后续配置
 
-- 启用 GO：填写 GO 传动比、行程和增益，将 `MECH_GO_CONTROL_ENABLE` 改为 1，再编译下载。
-- 气路：配置泵 GPIO 和阀通道；当前 `air_ready=false`，腕部运动可用，气路命令不可用。
+- 气路：配置泵 GPIO 和阀通道；当前 `air_ready=false`。气路未就绪不妨碍三轴运动，气路命令不可用。填写规则与启动行为见 [硬件接口](hardware_notes.md#气泵和阀板)。
 - 参数变更：每次只改一项，比较同一动作的角度、速度和电流波形。缩短时长会增加加速度需求；持续电流饱和时先处理负载或运动要求。重力前馈尚未实现。
 
 机构配置修改后需重新编译下载。直接电机 Watch 调试使用模板参数，须单独确认 PID 和电流上限，步骤见 [控制方案](control-plan.md#直接电机调试)。
